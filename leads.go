@@ -22,36 +22,38 @@ const (
 
 // LeadListItem is shaped for the leads table UI (display-ready strings).
 type LeadListItem struct {
-	ID              string   `json:"id"`
-	AnalystName     string   `json:"analystName"`
-	AnalystEmail    string   `json:"analystEmail"`
-	Source          string   `json:"source"`
-	Portal          string   `json:"portal"`
-	LeadLabel       string   `json:"leadLabel"`
-	CreatedAt       string   `json:"createdAt"`
-	CreatedAtRaw    string   `json:"createdAtRaw"`
-	Tag             string   `json:"tag"`
-	ContactPhone    string   `json:"contactPhone"`
-	ContactEmail    string   `json:"contactEmail"`
-	ContactLocation string   `json:"contactLocation"`
-	ClientProfile   string   `json:"clientProfile"`
-	AnalystNotes    string   `json:"analystNotes"`
-	ExecutiveNotes  string   `json:"executiveNotes"`
-	DuplicateCheck  string   `json:"duplicateCheck"`
-	Status          string   `json:"status"`
-	StatusRaw       string   `json:"statusRaw"`
-	Score           string   `json:"score"`
-	Stage           string   `json:"stage"`
-	StageRaw        string   `json:"stageRaw"`
-	Closed          string   `json:"closed"`
-	NotAppropriate  bool     `json:"notAppropriate"`
-	IP              string   `json:"ip"`
-	DealValue       string   `json:"dealValue"`
-	DealValueRaw    *float64 `json:"dealValueRaw"`
-	Team            string   `json:"team"`
-	SalesExecutive  string   `json:"salesExecutive"`
-	Handoff         string   `json:"handoff"`
-	IsNew           bool     `json:"isNew"`
+	ID                 string   `json:"id"`
+	AnalystName        string   `json:"analystName"`
+	AnalystEmail       string   `json:"analystEmail"`
+	Source             string   `json:"source"`
+	Portal             string   `json:"portal"`
+	LeadLabel          string   `json:"leadLabel"`
+	CreatedAt          string   `json:"createdAt"`
+	CreatedAtRaw       string   `json:"createdAtRaw"`
+	Tag                string   `json:"tag"`
+	ContactPhone       string   `json:"contactPhone"`
+	ContactEmail       string   `json:"contactEmail"`
+	ContactLocation    string   `json:"contactLocation"`
+	ClientProfile      string   `json:"clientProfile"`
+	AnalystNotes       string   `json:"analystNotes"`
+	ExecutiveNotes     string   `json:"executiveNotes"`
+	DuplicateCheck     string   `json:"duplicateCheck"`
+	Status             string   `json:"status"`
+	StatusRaw          string   `json:"statusRaw"`
+	Score              string   `json:"score"`
+	Stage              string   `json:"stage"`
+	StageRaw           string   `json:"stageRaw"`
+	Closed             string   `json:"closed"`
+	ClosedAt           *string  `json:"closedAt,omitempty"`
+	TimeToCloseMinutes *int     `json:"timeToCloseMinutes,omitempty"`
+	NotAppropriate     bool     `json:"notAppropriate"`
+	IP                 string   `json:"ip"`
+	DealValue          string   `json:"dealValue"`
+	DealValueRaw       *float64 `json:"dealValueRaw"`
+	Team               string   `json:"team"`
+	SalesExecutive     string   `json:"salesExecutive"`
+	Handoff            string   `json:"handoff"`
+	IsNew              bool     `json:"isNew"`
 }
 
 type LeadListResponse struct {
@@ -220,7 +222,8 @@ func formatMoneyAmount(value *float64) string {
 }
 
 func formatLeadCreatedAt(t time.Time) string {
-	return t.In(time.Local).Format("1/2/2006, 3:04 PM")
+	// Lead createdAt is a calendar date — never emit a fake midnight clock time.
+	return t.In(businessLocation()).Format("2006-01-02")
 }
 
 func formatDealValue(value *float64, currency string) string {
@@ -309,6 +312,26 @@ func closedLabel(closedAt *time.Time, stage string) string {
 	default:
 		return "Open"
 	}
+}
+
+func formatClosedAtRFC3339(closedAt *time.Time) *string {
+	if closedAt == nil {
+		return nil
+	}
+	formatted := closedAt.UTC().Format(time.RFC3339)
+	return &formatted
+}
+
+// timeToCloseMinutes is lead age from createdAt → closedAt (nil if still open).
+func timeToCloseMinutes(createdAt time.Time, closedAt *time.Time) *int {
+	if closedAt == nil {
+		return nil
+	}
+	mins := int(closedAt.Sub(createdAt).Minutes())
+	if mins < 0 {
+		mins = 0
+	}
+	return &mins
 }
 
 func normalizeLeadFilter(filter string) string {
@@ -923,30 +946,32 @@ func (s *LeadStore) List(ctx context.Context, params LeadListParams) (LeadListRe
 			tag = "New"
 		}
 		items = append(items, LeadListItem{
-			ID:              r.id,
-			AnalystName:     r.analystName,
-			AnalystEmail:    emailDisplay,
-			Source:          r.source,
-			Portal:          displayOrDash(r.portal),
-			LeadLabel:       r.leadName,
-			CreatedAt:       formatLeadCreatedAt(r.createdAt),
-			CreatedAtRaw:    r.createdAt.UTC().Format(time.RFC3339Nano),
-			Tag:             tag,
-			ContactPhone:    displayOrDash(r.phone),
-			ContactEmail:    displayOrDash(r.email),
-			ContactLocation: formatLocation(r.city, r.country),
-			ClientProfile:   displayOrDash(r.clientProfile),
-			AnalystNotes:    truncateDisplay(r.notes, 90),
-			ExecutiveNotes:  truncateDisplay(r.lostNotes, 90),
-			DuplicateCheck:  "—",
-			Status:          qualificationDisplay(r.status),
-			StatusRaw:       r.status,
-			Score:           formatLeadScore(r.score),
-			Stage:           salesStageDisplay(r.stage),
-			StageRaw:        r.stage,
-			Closed:          closedLabel(r.closedAt, r.stage),
-			NotAppropriate:  r.notAppropriate,
-			IP:              formatMoneyAmount(r.initialPayment),
+			ID:                 r.id,
+			AnalystName:        r.analystName,
+			AnalystEmail:       emailDisplay,
+			Source:             r.source,
+			Portal:             displayOrDash(r.portal),
+			LeadLabel:          r.leadName,
+			CreatedAt:          formatLeadCreatedAt(r.createdAt),
+			CreatedAtRaw:       r.createdAt.UTC().Format(time.RFC3339Nano),
+			Tag:                tag,
+			ContactPhone:       displayOrDash(r.phone),
+			ContactEmail:       displayOrDash(r.email),
+			ContactLocation:    formatLocation(r.city, r.country),
+			ClientProfile:      displayOrDash(r.clientProfile),
+			AnalystNotes:       truncateDisplay(r.notes, 90),
+			ExecutiveNotes:     truncateDisplay(r.lostNotes, 90),
+			DuplicateCheck:     "—",
+			Status:             qualificationDisplay(r.status),
+			StatusRaw:          r.status,
+			Score:              formatLeadScore(r.score),
+			Stage:              salesStageDisplay(r.stage),
+			StageRaw:           r.stage,
+			Closed:             closedLabel(r.closedAt, r.stage),
+			ClosedAt:           formatClosedAtRFC3339(r.closedAt),
+			TimeToCloseMinutes: timeToCloseMinutes(r.createdAt, r.closedAt),
+			NotAppropriate:     r.notAppropriate,
+			IP:                 formatMoneyAmount(r.initialPayment),
 			DealValue: formatDealValue(func() *float64 {
 				if r.closedRevenue != nil {
 					return r.closedRevenue
@@ -1357,8 +1382,8 @@ func (s *LeadStore) AddedSeries(ctx context.Context, granularity string, filter 
 		query = `
 			WITH bounds AS (
 				SELECT
-					date_trunc('month', CURRENT_DATE)::date AS end_month,
-					(date_trunc('month', CURRENT_DATE) - INTERVAL '11 months')::date AS start_month
+					date_trunc('month', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kathmandu')::date)::date AS end_month,
+					(date_trunc('month', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kathmandu')::date) - INTERVAL '11 months')::date AS start_month
 			),
 			months AS (
 				SELECT generate_series(
@@ -1368,11 +1393,11 @@ func (s *LeadStore) AddedSeries(ctx context.Context, granularity string, filter 
 				)::date AS bucket
 			),
 			counts AS (
-				SELECT date_trunc('month', l."createdAt")::date AS bucket, COUNT(*)::int AS cnt
+				SELECT date_trunc('month', timezone('Asia/Kathmandu', l."createdAt"))::date AS bucket, COUNT(*)::int AS cnt
 				FROM "Lead" l
 				CROSS JOIN bounds b
-				WHERE l."createdAt" >= b.start_month
-				  AND l."createdAt" < (b.end_month + INTERVAL '1 month')` + geoAnd + `
+				WHERE (timezone('Asia/Kathmandu', l."createdAt"))::date >= b.start_month
+				  AND (timezone('Asia/Kathmandu', l."createdAt"))::date < (b.end_month + INTERVAL '1 month')` + geoAnd + `
 				GROUP BY 1
 			)
 			SELECT
@@ -1387,8 +1412,8 @@ func (s *LeadStore) AddedSeries(ctx context.Context, granularity string, filter 
 		query = `
 			WITH bounds AS (
 				SELECT
-					CURRENT_DATE AS end_day,
-					(CURRENT_DATE - INTERVAL '29 days')::date AS start_day
+					(CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kathmandu')::date AS end_day,
+					((CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kathmandu')::date - INTERVAL '29 days')::date AS start_day
 			),
 			days AS (
 				SELECT generate_series(
@@ -1398,11 +1423,11 @@ func (s *LeadStore) AddedSeries(ctx context.Context, granularity string, filter 
 				)::date AS bucket
 			),
 			counts AS (
-				SELECT (l."createdAt")::date AS bucket, COUNT(*)::int AS cnt
+				SELECT (timezone('Asia/Kathmandu', l."createdAt"))::date AS bucket, COUNT(*)::int AS cnt
 				FROM "Lead" l
 				CROSS JOIN bounds b
-				WHERE l."createdAt" >= b.start_day
-				  AND l."createdAt" < (b.end_day + INTERVAL '1 day')` + geoAnd + `
+				WHERE (timezone('Asia/Kathmandu', l."createdAt"))::date >= b.start_day
+				  AND (timezone('Asia/Kathmandu', l."createdAt"))::date <= b.end_day` + geoAnd + `
 				GROUP BY 1
 			)
 			SELECT
@@ -2082,7 +2107,7 @@ func isAssignableQualification(status string) bool {
 	}
 }
 
-func (s *LeadStore) UpdateQualificationStatus(ctx context.Context, id, status string) (string, error) {
+func (s *LeadStore) UpdateQualificationStatus(ctx context.Context, id, status, actorID string) (string, error) {
 	id = strings.TrimSpace(id)
 	status = strings.TrimSpace(status)
 	if id == "" {
@@ -2091,15 +2116,41 @@ func (s *LeadStore) UpdateQualificationStatus(ctx context.Context, id, status st
 	if _, ok := allowedQualifications[status]; !ok {
 		return "", fmt.Errorf("invalid qualification status")
 	}
-	tag, err := s.pool.Exec(ctx, `
+
+	var current string
+	err := s.pool.QueryRow(ctx, `
+		SELECT "qualificationStatus" FROM "Lead" WHERE id = $1`, id).Scan(&current)
+	if err != nil {
+		return "", fmt.Errorf("lead not found")
+	}
+	if strings.TrimSpace(current) == status {
+		return status, nil
+	}
+
+	now := time.Now().UTC()
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback(ctx)
+
+	tag, err := tx.Exec(ctx, `
 		UPDATE "Lead"
-		SET "qualificationStatus" = $2, "updatedAt" = $3
-		WHERE id = $1`, id, status, time.Now().UTC())
+		SET "qualificationStatus" = $2,
+		    "qualificationEnteredAt" = $3::timestamptz,
+		    "updatedAt" = $4::timestamptz
+		WHERE id = $1`, id, status, now, now)
 	if err != nil {
 		return "", err
 	}
 	if tag.RowsAffected() == 0 {
 		return "", fmt.Errorf("lead not found")
+	}
+	if err := insertQualificationLog(ctx, tx, id, current, status, actorID, "", "patch_qual", now); err != nil {
+		return "", err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return "", err
 	}
 	return status, nil
 }
@@ -2136,11 +2187,11 @@ type LeadContactMatch struct {
 // PhonePresence is the add-lead phone lookup: team plus portals/sources
 // already used with that number on the platform.
 type PhonePresence struct {
-	ID      string
+	ID       string
 	LeadName string
 	TeamName *string
-	Portals []string
-	Sources []string
+	Portals  []string
+	Sources  []string
 }
 
 // FindLeadByPhone returns any lead with the same phone digits (team label
@@ -2385,6 +2436,16 @@ func (s *LeadStore) Create(ctx context.Context, in CreateLeadInput) (string, err
 		return "", err
 	}
 
+	if err := insertQualificationLog(ctx, tx, id, "", in.QualificationStatus, createdBy, "", "create", createdAt); err != nil {
+		return "", err
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE "Lead"
+		SET "qualificationEnteredAt" = $2
+		WHERE id = $1`, id, createdAt); err != nil {
+		return "", err
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return "", err
 	}
@@ -2393,38 +2454,42 @@ func (s *LeadStore) Create(ctx context.Context, in CreateLeadInput) (string, err
 
 // LeadDetail is the editable lead payload for the add/edit drawer.
 type LeadDetail struct {
-	ID                     string   `json:"id"`
-	FullName               string   `json:"fullName"`
-	Email                  *string  `json:"email"`
-	Phone                  *string  `json:"phone"`
-	Country                *string  `json:"country"`
-	City                   *string  `json:"city"`
-	PortalWebsite          *string  `json:"portalWebsite"`
-	Source                 string   `json:"source"`
-	SourceMetaProfileName  *string  `json:"facebookProfile"`
-	Language               *string  `json:"language"`
-	ClientProfile          *string  `json:"clientProfile"`
-	QualificationStatus    string   `json:"qualificationStatus"`
-	LeadScore              *int     `json:"leadScore"`
-	CreatedAt              string   `json:"createdAt"`
-	Notes                  *string  `json:"notes"`
-	FirstClientMessageAt   *string  `json:"firstClientMessageAt"`
-	FirstAgentMessageAt    *string  `json:"firstAgentMessageAt"`
-	FirstResponseMinutes   *int     `json:"firstResponseMinutes"`
-	FirstResponseProofPath *string  `json:"firstResponseProofPath"`
-	SalesStage             string   `json:"salesStage"`
-	SalesStageLabel        string   `json:"salesStageLabel"`
-	InitialPayment         *float64 `json:"initialPayment"`
-	ClosedRevenue          *float64 `json:"closedRevenue"`
-	EstimatedDealValue     *float64 `json:"estimatedDealValue"`
-	DealValue              *float64 `json:"dealValue"`
-	DealValueDisplay       string   `json:"dealValueDisplay"`
-	DealCurrency           string   `json:"dealCurrency"`
-	ExecutiveNotes         *string  `json:"executiveNotes"`
-	Closed                 string   `json:"closed"`
-	NotAppropriate         bool     `json:"notAppropriate"`
-	NotAppropriateReason   *string  `json:"notAppropriateReason"`
-	NotAppropriateAt       *string  `json:"notAppropriateAt,omitempty"`
+	ID                     string                      `json:"id"`
+	FullName               string                      `json:"fullName"`
+	Email                  *string                     `json:"email"`
+	Phone                  *string                     `json:"phone"`
+	Country                *string                     `json:"country"`
+	City                   *string                     `json:"city"`
+	PortalWebsite          *string                     `json:"portalWebsite"`
+	Source                 string                      `json:"source"`
+	SourceMetaProfileName  *string                     `json:"facebookProfile"`
+	Language               *string                     `json:"language"`
+	ClientProfile          *string                     `json:"clientProfile"`
+	QualificationStatus    string                      `json:"qualificationStatus"`
+	LeadScore              *int                        `json:"leadScore"`
+	CreatedAt              string                      `json:"createdAt"`
+	Notes                  *string                     `json:"notes"`
+	FirstClientMessageAt   *string                     `json:"firstClientMessageAt"`
+	FirstAgentMessageAt    *string                     `json:"firstAgentMessageAt"`
+	FirstResponseMinutes   *int                        `json:"firstResponseMinutes"`
+	FirstResponseProofPath *string                     `json:"firstResponseProofPath"`
+	SalesStage             string                      `json:"salesStage"`
+	SalesStageLabel        string                      `json:"salesStageLabel"`
+	InitialPayment         *float64                    `json:"initialPayment"`
+	ClosedRevenue          *float64                    `json:"closedRevenue"`
+	EstimatedDealValue     *float64                    `json:"estimatedDealValue"`
+	DealValue              *float64                    `json:"dealValue"`
+	DealValueDisplay       string                      `json:"dealValueDisplay"`
+	DealCurrency           string                      `json:"dealCurrency"`
+	ExecutiveNotes         *string                     `json:"executiveNotes"`
+	Closed                 string                      `json:"closed"`
+	ClosedAt               *string                     `json:"closedAt,omitempty"`
+	TimeToCloseMinutes     *int                        `json:"timeToCloseMinutes,omitempty"`
+	NotAppropriate         bool                        `json:"notAppropriate"`
+	NotAppropriateReason   *string                     `json:"notAppropriateReason"`
+	NotAppropriateAt       *string                     `json:"notAppropriateAt,omitempty"`
+	QualificationEnteredAt *string                     `json:"qualificationEnteredAt,omitempty"`
+	QualificationHistory   []QualificationStatusChange `json:"qualificationHistory,omitempty"`
 }
 
 func optionalProofPath(raw *string) *string {
@@ -2455,6 +2520,7 @@ func (s *LeadStore) GetByID(ctx context.Context, id string) (LeadDetail, error) 
 	var createdAt time.Time
 	var closedAt *time.Time
 	var notAppropriateAt *time.Time
+	var qualEnteredAt *time.Time
 	var proofPath *string
 	var clientAt, agentAt *time.Time
 	err := s.pool.QueryRow(ctx, `
@@ -2487,7 +2553,8 @@ func (s *LeadStore) GetByID(ctx context.Context, id string) (LeadDetail, error) 
 			"closedAt",
 			"notAppropriate",
 			"notAppropriateReason",
-			"notAppropriateAt"
+			"notAppropriateAt",
+			"qualificationEnteredAt"
 		FROM "Lead"
 		WHERE id = $1`, id).Scan(
 		&out.ID,
@@ -2519,27 +2586,35 @@ func (s *LeadStore) GetByID(ctx context.Context, id string) (LeadDetail, error) 
 		&out.NotAppropriate,
 		&out.NotAppropriateReason,
 		&notAppropriateAt,
+		&qualEnteredAt,
 	)
 	if err != nil {
 		return LeadDetail{}, err
 	}
-	out.CreatedAt = createdAt.In(time.Local).Format("2006-01-02")
+	out.CreatedAt = createdAt.In(businessLocation()).Format("2006-01-02")
 	out.SalesStageLabel = salesStageDisplay(out.SalesStage)
 	out.Closed = closedLabel(closedAt, out.SalesStage)
+	out.ClosedAt = formatClosedAtRFC3339(closedAt)
+	out.TimeToCloseMinutes = timeToCloseMinutes(createdAt, closedAt)
 	if strings.TrimSpace(out.DealCurrency) == "" {
 		out.DealCurrency = "AUD"
 	}
 	if clientAt != nil {
-		formatted := clientAt.In(time.Local).Format("2006-01-02T15:04")
+		// Wall-clock in business TZ for the datetime picker (YYYY-MM-DDTHH:mm).
+		formatted := clientAt.In(businessLocation()).Format("2006-01-02T15:04")
 		out.FirstClientMessageAt = &formatted
 	}
 	if agentAt != nil {
-		formatted := agentAt.In(time.Local).Format("2006-01-02T15:04")
+		formatted := agentAt.In(businessLocation()).Format("2006-01-02T15:04")
 		out.FirstAgentMessageAt = &formatted
 	}
 	if notAppropriateAt != nil {
 		formatted := notAppropriateAt.UTC().Format(time.RFC3339)
 		out.NotAppropriateAt = &formatted
+	}
+	if qualEnteredAt != nil {
+		formatted := qualEnteredAt.UTC().Format(time.RFC3339)
+		out.QualificationEnteredAt = &formatted
 	}
 	if proofPath != nil && strings.TrimSpace(*proofPath) != "" {
 		public := proofPublicPath(proofStoredNameFromPath(*proofPath))
@@ -2552,6 +2627,17 @@ func (s *LeadStore) GetByID(ctx context.Context, id string) (LeadDetail, error) 
 		out.DealValue = out.EstimatedDealValue
 	}
 	out.DealValueDisplay = formatDealValue(out.DealValue, out.DealCurrency)
+
+	_ = s.ensureQualificationLogSeeded(ctx, out.ID, out.QualificationStatus, createdAt)
+	if history, histErr := s.ListQualificationHistory(ctx, out.ID); histErr == nil {
+		out.QualificationHistory = history
+		if len(history) > 0 && out.QualificationEnteredAt == nil {
+			latest := history[len(history)-1].ChangedAt
+			out.QualificationEnteredAt = &latest
+		}
+	} else {
+		out.QualificationHistory = []QualificationStatusChange{}
+	}
 	return out, nil
 }
 
@@ -2607,18 +2693,16 @@ func (s *LeadStore) UpdateSalesOutcome(ctx context.Context, id string, in SalesO
 
 	if in.HasStage {
 		setParts = append(setParts, `"salesStage" = `+next(stage))
-		var closedAt any
 		switch stage {
 		case "CLOSED_WON", "CLOSED_LOST":
 			if currentClosedAt != nil {
-				closedAt = *currentClosedAt
+				setParts = append(setParts, `"closedAt" = `+next(*currentClosedAt)+"::timestamptz")
 			} else {
-				closedAt = now
+				setParts = append(setParts, `"closedAt" = `+next(now)+"::timestamptz")
 			}
 		default:
-			closedAt = nil
+			setParts = append(setParts, `"closedAt" = NULL`)
 		}
-		setParts = append(setParts, `"closedAt" = `+next(closedAt))
 	}
 	if in.HasPayment {
 		setParts = append(setParts, `"initialPayment" = `+next(in.InitialPayment))
@@ -2688,7 +2772,17 @@ func (s *LeadStore) MarkNotAppropriate(ctx context.Context, id, reason, actorID 
 	if actorID != "" {
 		byID = actorID
 	}
-	tag, err := s.pool.Exec(ctx, `
+	var currentQual string
+	_ = s.pool.QueryRow(ctx, `
+		SELECT "qualificationStatus" FROM "Lead" WHERE id = $1`, id).Scan(&currentQual)
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return LeadDetail{}, err
+	}
+	defer tx.Rollback(ctx)
+
+	tag, err := tx.Exec(ctx, `
 		UPDATE "Lead"
 		SET
 			"notAppropriate" = TRUE,
@@ -2696,6 +2790,10 @@ func (s *LeadStore) MarkNotAppropriate(ctx context.Context, id, reason, actorID 
 			"notAppropriateAt" = $3::timestamptz,
 			"notAppropriateById" = $4,
 			"qualificationStatus" = 'IRRELEVANT',
+			"qualificationEnteredAt" = CASE
+				WHEN "qualificationStatus" IS DISTINCT FROM 'IRRELEVANT' THEN $5::timestamptz
+				ELSE "qualificationEnteredAt"
+			END,
 			"updatedAt" = $5::timestamptz
 		WHERE id = $1 AND "notAppropriate" = FALSE`,
 		id, reason, now, byID, now,
@@ -2705,6 +2803,14 @@ func (s *LeadStore) MarkNotAppropriate(ctx context.Context, id, reason, actorID 
 	}
 	if tag.RowsAffected() == 0 {
 		return LeadDetail{}, fmt.Errorf("lead is already marked not appropriate")
+	}
+	if strings.TrimSpace(currentQual) != "IRRELEVANT" {
+		if err := insertQualificationLog(ctx, tx, id, currentQual, "IRRELEVANT", actorID, reason, "not_appropriate", now); err != nil {
+			return LeadDetail{}, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return LeadDetail{}, err
 	}
 	return s.GetByID(ctx, id)
 }
@@ -2801,7 +2907,14 @@ func (s *LeadStore) Update(ctx context.Context, id string, in CreateLeadInput) e
 		proofPath = nil
 	}
 
-	tag, err := s.pool.Exec(ctx, `
+	statusChanged := strings.TrimSpace(in.QualificationStatus) != strings.TrimSpace(currentQual)
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	tag, err := tx.Exec(ctx, `
 		UPDATE "Lead" SET
 			"leadName" = $2,
 			"leadEmail" = $3,
@@ -2821,7 +2934,11 @@ func (s *LeadStore) Update(ctx context.Context, id string, in CreateLeadInput) e
 			"firstResponseMinutes" = $17,
 			"firstResponseProofPath" = $18,
 			"createdAt" = COALESCE($19, "createdAt"),
-			"updatedAt" = $20
+			"qualificationEnteredAt" = CASE
+				WHEN $21 THEN $20::timestamptz
+				ELSE "qualificationEnteredAt"
+			END,
+			"updatedAt" = $20::timestamptz
 		WHERE id = $1`,
 		id,
 		strings.TrimSpace(in.FullName),
@@ -2843,6 +2960,7 @@ func (s *LeadStore) Update(ctx context.Context, id string, in CreateLeadInput) e
 		proofPath,
 		createdAt,
 		now,
+		statusChanged,
 	)
 	if err != nil {
 		return err
@@ -2850,5 +2968,11 @@ func (s *LeadStore) Update(ctx context.Context, id string, in CreateLeadInput) e
 	if tag.RowsAffected() == 0 {
 		return fmt.Errorf("lead not found")
 	}
-	return nil
+	if statusChanged {
+		actorID := strings.TrimSpace(in.CreatedByID)
+		if err := insertQualificationLog(ctx, tx, id, currentQual, in.QualificationStatus, actorID, "", "update", now); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
 }

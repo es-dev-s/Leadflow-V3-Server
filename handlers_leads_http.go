@@ -151,16 +151,24 @@ func parseOptionalDateTime(raw *string, field string) (*time.Time, error) {
 	if trimmed == "" {
 		return nil, nil
 	}
+	// Absolute timestamps (include zone).
+	if parsed, err := time.Parse(time.RFC3339Nano, trimmed); err == nil {
+		return &parsed, nil
+	}
+	if parsed, err := time.Parse(time.RFC3339, trimmed); err == nil {
+		return &parsed, nil
+	}
+	// Naive wall-clock values are interpreted in the business timezone.
+	loc := businessLocation()
 	layouts := []string{
 		"2006-01-02T15:04",
 		"2006-01-02T15:04:05",
-		time.RFC3339,
 		"2006-01-02 15:04",
 		"2006-01-02 15:04:05",
 	}
 	var lastErr error
 	for _, layout := range layouts {
-		parsed, err := time.ParseInLocation(layout, trimmed, time.Local)
+		parsed, err := time.ParseInLocation(layout, trimmed, loc)
 		if err == nil {
 			return &parsed, nil
 		}
@@ -310,20 +318,21 @@ func (s *Server) createLead(w http.ResponseWriter, r *http.Request) {
 	var createdAt *time.Time
 	if req.CreatedAt != nil && strings.TrimSpace(*req.CreatedAt) != "" {
 		raw := strings.TrimSpace(*req.CreatedAt)
+		loc := businessLocation()
 		// Date-only is the product format; accept a few legacy datetime shapes too.
-		parsed, err := time.ParseInLocation("2006-01-02", raw, time.Local)
+		parsed, err := time.ParseInLocation("2006-01-02", raw, loc)
 		if err != nil {
 			parsed, err = time.Parse(time.RFC3339, raw)
 		}
 		if err != nil {
-			parsed, err = time.Parse("2006-01-02T15:04", raw)
+			parsed, err = time.ParseInLocation("2006-01-02T15:04", raw, loc)
 		}
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "invalid createdAt date")
 			return
 		}
-		// Persist as calendar date at local midnight.
-		day := time.Date(parsed.Year(), parsed.Month(), parsed.Day(), 0, 0, 0, 0, time.Local)
+		// Persist as calendar date at business-timezone midnight.
+		day := time.Date(parsed.Year(), parsed.Month(), parsed.Day(), 0, 0, 0, 0, loc)
 		createdAt = &day
 	}
 
@@ -686,7 +695,11 @@ func (s *Server) patchLeadQualification(w http.ResponseWriter, r *http.Request, 
 		writeError(w, http.StatusBadRequest, "qualificationStatus is required")
 		return
 	}
-	updated, err := s.leads.UpdateQualificationStatus(r.Context(), id, status)
+	actorID := ""
+	if authUser, ok := userFromContext(r.Context()); ok {
+		actorID = authUser.ID
+	}
+	updated, err := s.leads.UpdateQualificationStatus(r.Context(), id, status, actorID)
 	if err != nil {
 		msg := err.Error()
 		if strings.Contains(msg, "invalid qualification") {
@@ -765,18 +778,19 @@ func (s *Server) updateLead(w http.ResponseWriter, r *http.Request, id string) {
 	var createdAt *time.Time
 	if req.CreatedAt != nil && strings.TrimSpace(*req.CreatedAt) != "" {
 		raw := strings.TrimSpace(*req.CreatedAt)
-		parsed, err := time.ParseInLocation("2006-01-02", raw, time.Local)
+		loc := businessLocation()
+		parsed, err := time.ParseInLocation("2006-01-02", raw, loc)
 		if err != nil {
 			parsed, err = time.Parse(time.RFC3339, raw)
 		}
 		if err != nil {
-			parsed, err = time.Parse("2006-01-02T15:04", raw)
+			parsed, err = time.ParseInLocation("2006-01-02T15:04", raw, loc)
 		}
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "invalid createdAt date")
 			return
 		}
-		day := time.Date(parsed.Year(), parsed.Month(), parsed.Day(), 0, 0, 0, 0, time.Local)
+		day := time.Date(parsed.Year(), parsed.Month(), parsed.Day(), 0, 0, 0, 0, loc)
 		createdAt = &day
 	}
 
@@ -794,6 +808,10 @@ func (s *Server) updateLead(w http.ResponseWriter, r *http.Request, id string) {
 		return
 	}
 
+	actorID := ""
+	if authUser, ok := userFromContext(r.Context()); ok {
+		actorID = authUser.ID
+	}
 	err = s.leads.Update(r.Context(), id, CreateLeadInput{
 		FullName:               req.FullName,
 		Email:                  email,
@@ -813,6 +831,7 @@ func (s *Server) updateLead(w http.ResponseWriter, r *http.Request, id string) {
 		FirstAgentMessageAt:    agentAt,
 		FirstResponseMinutes:   responseMinutes,
 		FirstResponseProofPath: proofPath,
+		CreatedByID:            actorID,
 	})
 	if err != nil {
 		msg := err.Error()
