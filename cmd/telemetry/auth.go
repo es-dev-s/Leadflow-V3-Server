@@ -79,6 +79,26 @@ func bearerToken(r *http.Request) string {
 	return ""
 }
 
+func authCookieName() string {
+	if v := strings.TrimSpace(envOr("AUTH_COOKIE_NAME", "")); v != "" {
+		return v
+	}
+	return "leadflow_access"
+}
+
+// accessToken prefers Authorization Bearer, then the shared HttpOnly cookie
+// used by the CRM UI (same site via Next proxy).
+func accessToken(r *http.Request) string {
+	if tok := bearerToken(r); tok != "" {
+		return tok
+	}
+	c, err := r.Cookie(authCookieName())
+	if err != nil || c == nil {
+		return ""
+	}
+	return strings.TrimSpace(c.Value)
+}
+
 func canReadSupport(role string) bool {
 	return role == "SUPPORT" || role == "SUPERADMIN"
 }

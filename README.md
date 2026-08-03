@@ -17,7 +17,17 @@ HOST=0.0.0.0
 TELEMETRY_PORT=9081
 CRM_URL=http://127.0.0.1:9080
 TELEMETRY_URL=http://127.0.0.1:9081
+
+# Production hardening
+APP_ENV=production
+COOKIE_SECURE=true
+COOKIE_SAMESITE=Lax
+# Comma-separated browser origins allowed for credentialed CORS.
+# Prefer same-origin reverse proxy to the UI; set this if the browser calls the API host directly.
+CORS_ORIGINS=https://app.example.com
 ```
+
+Schema changes ship as versioned SQL under `migrations/` (and `cmd/telemetry/migrations/`). Startup applies them once via `schema_migrations` — it no longer runs ad-hoc DDL.
 
 ```bash
 cd backend
@@ -61,16 +71,14 @@ Pass `Authorization: Bearer <token>` on protected routes.
 
 - Passwords hashed with bcrypt (legacy plaintext upgraded on successful login)
 - JWT HS256, 24h TTL, issuer `leadflow-backend`
-- Every authenticated request reloads the user from DB (role/deletion enforced live)
+- Browsers authenticate with an **HttpOnly** cookie (`leadflow_access`); JS never stores the JWT
+- API/automation clients may still send `Authorization: Bearer <token>`
+- SSE uses cookie/Bearer only — query-string tokens are rejected
+- CORS is an explicit `CORS_ORIGINS` allowlist (includes `PUT`); origins are never reflected
+- Every authenticated CRM request reloads the user from DB (role/deletion enforced live)
 - Login rate-limited (12 attempts / 10 minutes per IP+email)
 - New passwords require ≥8 chars with at least one letter and one number
-
-### Demo Superadmin
-
-After local password bootstrap (dev):
-
-- Email: `superadmin@demo.local`
-- Password: `LeadFlow1!`
+- `POST /api/auth/logout` clears the session cookie
 
 ### Bulk lead seed (resilience testing)
 

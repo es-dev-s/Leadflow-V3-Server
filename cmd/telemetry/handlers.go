@@ -17,27 +17,9 @@ type Server struct {
 	ingestKey string
 }
 
-func withCORS(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		origin := r.Header.Get("Origin")
-		if origin == "" {
-			origin = "*"
-		}
-		w.Header().Set("Access-Control-Allow-Origin", origin)
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Telemetry-Token")
-		w.Header().Set("Access-Control-Max-Age", "86400")
-		if r.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		next(w, r)
-	}
-}
-
 func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 	return withCORS(func(w http.ResponseWriter, r *http.Request) {
-		token := bearerToken(r)
+		token := accessToken(r)
 		if token == "" {
 			writeError(w, http.StatusUnauthorized, "authentication required")
 			return
@@ -79,7 +61,7 @@ func (s *Server) authorizeIngest(r *http.Request) (*AuthUser, bool) {
 	if key := strings.TrimSpace(r.Header.Get("X-Telemetry-Token")); key != "" && s.ingestKey != "" && key == s.ingestKey {
 		return nil, true
 	}
-	token := bearerToken(r)
+	token := accessToken(r)
 	if token == "" {
 		return nil, false
 	}

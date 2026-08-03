@@ -12,6 +12,7 @@ import (
 
 func main() {
 	loadEnvFromCRM()
+	corsConfig = loadCORSConfig()
 
 	jwtSecret := envOr("JWT_SECRET", "")
 	if jwtSecret == "" {
@@ -35,10 +36,10 @@ func main() {
 	log.Printf("telemetry store connected (%s)", redactURL(usedURL))
 
 	store := NewStore(pool)
-	ensureCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	if err := store.EnsureSchema(ensureCtx); err != nil {
+	migrateCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	if err := RunTelemetryMigrations(migrateCtx, pool); err != nil {
 		cancel()
-		log.Fatalf("ensure schema: %v", err)
+		log.Fatalf("migrations: %v", err)
 	}
 	cancel()
 

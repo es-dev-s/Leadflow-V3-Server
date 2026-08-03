@@ -7,8 +7,8 @@ import (
 
 // KpiSnapshot maps the 7 TODO.md KPIs onto live Lead / User counts plus targets.
 type KpiSnapshot struct {
-	Items                 []KpiItem `json:"items"`
-	NotAppropriateCount   int64     `json:"notAppropriateCount"`
+	Items               []KpiItem `json:"items"`
+	NotAppropriateCount int64     `json:"notAppropriateCount"`
 }
 
 type KpiItem struct {
@@ -44,14 +44,14 @@ func (s *LeadStore) KPI(ctx context.Context, params LeadListParams, teamHC int64
 	}
 
 	var (
-		qualifiedTotal       int64
-		qualifiedConverted   int64
-		closedLostQual       int64
-		avgScore             *float64
-		scoreSamples         int64
-		avgFirstResponse     *float64
-		firstResponseCount   int64
-		notAppropriateCount  int64
+		qualifiedTotal      int64
+		qualifiedConverted  int64
+		closedLostQual      int64
+		avgScore            *float64
+		scoreSamples        int64
+		avgFirstResponse    *float64
+		firstResponseCount  int64
+		notAppropriateCount int64
 	)
 
 	leadWhere, leadArgs := leadScopeWhere(params, true)

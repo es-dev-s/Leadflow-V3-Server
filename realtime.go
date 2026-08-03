@@ -13,12 +13,12 @@ import (
 
 // Realtime event types broadcast to connected clients over SSE.
 const (
-	EvtLeadCreated = "lead.created"
-	EvtLeadUpdated = "lead.updated"
-	EvtLeadDeleted = "lead.deleted"
-	EvtUserCreated = "user.created"
-	EvtUserUpdated = "user.updated"
-	EvtUserDeleted = "user.deleted"
+	EvtLeadCreated  = "lead.created"
+	EvtLeadUpdated  = "lead.updated"
+	EvtLeadDeleted  = "lead.deleted"
+	EvtUserCreated  = "user.created"
+	EvtUserUpdated  = "user.updated"
+	EvtUserDeleted  = "user.deleted"
 	EvtNotification = "notification"
 )
 
@@ -123,21 +123,37 @@ func (s *Server) emitUser(evtType, userID, actorID string) {
 	s.hub.Broadcast(RealtimeEvent{Type: evtType, UserID: userID, ActorID: actorID})
 }
 
-// handleEvents serves the SSE stream. EventSource cannot send Authorization
-// headers, so it also accepts ?access_token= (only used for this read stream).
+// handleEvents serves the SSE stream. Browsers authenticate via the HttpOnly
+// cookie (same-origin / credentials). API clients may send Authorization.
+// Query-string tokens are rejected.
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
-	token := bearerToken(r)
+	token := s.accessToken(r)
 	if token == "" {
-		token = r.URL.Query().Get("access_token")
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
 	}
-	user, err := s.tokens.Parse(token)
+	claimsUser, err := s.tokens.Parse(token)
 	if err != nil {
 		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	// Match requireAuth: deleted / deactivated / role-changed users drop off.
+	dbUser, err := s.users.FindByID(r.Context(), claimsUser.ID)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	if !dbUser.IsActive {
+		writeError(w, http.StatusForbidden, "account is inactive")
+		return
+	}
+	if !isValidRole(dbUser.Role) {
+		writeError(w, http.StatusForbidden, "account role is invalid")
 		return
 	}
 
@@ -151,11 +167,6 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	rc := http.NewResponseController(w)
 	_ = rc.SetWriteDeadline(time.Time{})
 
-	origin := r.Header.Get("Origin")
-	if origin != "" {
-		w.Header().Set("Access-Control-Allow-Origin", origin)
-		w.Header().Set("Access-Control-Allow-Credentials", "true")
-	}
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache, no-transform")
 	w.Header().Set("Connection", "keep-alive")
@@ -165,12 +176,12 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 
 	client := &sseClient{
 		id:     uuid.NewString(),
-		userID: user.ID,
+		userID: dbUser.ID,
 		ch:     make(chan []byte, 64),
 	}
 	total := s.hub.add(client)
 	defer s.hub.remove(client.id)
-	log.Printf("sse: client connected user=%s total=%d", user.ID, total)
+	log.Printf("sse: client connected user=%s total=%d", dbUser.ID, total)
 
 	// Advise the browser to reconnect quickly and confirm the stream is live.
 	fmt.Fprintf(w, "retry: 3000\nevent: ready\ndata: {\"ok\":true}\n\n")

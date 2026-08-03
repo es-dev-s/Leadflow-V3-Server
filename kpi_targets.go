@@ -116,28 +116,9 @@ func defaultKpiTargetSeeds() []kpiTargetSeed {
 	}
 }
 
-func (s *LeadStore) EnsureKpiTargetSchema(ctx context.Context) error {
-	_, err := s.pool.Exec(ctx, `
-		CREATE TABLE IF NOT EXISTS "KpiTarget" (
-			key TEXT PRIMARY KEY,
-			label TEXT NOT NULL,
-			description TEXT NOT NULL DEFAULT '',
-			formula TEXT NOT NULL DEFAULT '',
-			unit TEXT NOT NULL DEFAULT 'percent',
-			direction TEXT NOT NULL DEFAULT 'higher_better',
-			"targetValue" DOUBLE PRECISION,
-			"benchmarkValue" DOUBLE PRECISION,
-			"teamWeight" DOUBLE PRECISION,
-			"supervisorWeight" DOUBLE PRECISION,
-			"teamAligned" BOOLEAN NOT NULL DEFAULT TRUE,
-			"supervisorAligned" BOOLEAN NOT NULL DEFAULT TRUE,
-			"sortOrder" INTEGER NOT NULL DEFAULT 0,
-			"updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW()
-		)`)
-	if err != nil {
-		return fmt.Errorf("create KpiTarget: %w", err)
-	}
-
+// SeedKpiTargets upserts canonical KPI metadata. Schema is owned by
+// versioned migrations (migrations/000002_kpi_targets.up.sql).
+func (s *LeadStore) SeedKpiTargets(ctx context.Context) error {
 	now := time.Now().UTC()
 	for _, seed := range defaultKpiTargetSeeds() {
 		_, err := s.pool.Exec(ctx, `

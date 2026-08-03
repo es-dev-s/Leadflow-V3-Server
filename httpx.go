@@ -32,28 +32,9 @@ func writeValidationError(w http.ResponseWriter, v *ValidationError) {
 	})
 }
 
-func withCORS(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		origin := r.Header.Get("Origin")
-		if origin == "" {
-			origin = "*"
-		}
-		w.Header().Set("Access-Control-Allow-Origin", origin)
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-		w.Header().Set("Access-Control-Max-Age", "86400")
-
-		if r.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		next(w, r)
-	}
-}
-
 func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 	return withCORS(func(w http.ResponseWriter, r *http.Request) {
-		token := bearerToken(r)
+		token := s.accessToken(r)
 		if token == "" {
 			writeError(w, http.StatusUnauthorized, "authentication required")
 			return
@@ -63,10 +44,14 @@ func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 			writeError(w, http.StatusUnauthorized, "invalid or expired token")
 			return
 		}
-		// Re-load from DB so deleted users / role changes apply immediately.
+		// Re-load from DB so deleted / deactivated users and role changes apply immediately.
 		dbUser, err := s.users.FindByID(r.Context(), claimsUser.ID)
 		if err != nil {
 			writeError(w, http.StatusUnauthorized, "invalid or expired token")
+			return
+		}
+		if !dbUser.IsActive {
+			writeError(w, http.StatusForbidden, "account is inactive")
 			return
 		}
 		if !isValidRole(dbUser.Role) {

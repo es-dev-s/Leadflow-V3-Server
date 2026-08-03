@@ -15,11 +15,11 @@ import (
 )
 
 const (
-	NotifLeadAdded     = "LEAD_ADDED"
-	NotifLeadUpdated   = "LEAD_UPDATED"
-	NotifLeadDeleted   = "LEAD_DELETED"
-	NotifLeadAssigned  = "LEAD_ASSIGNED"
-	NotifLeadTransfer  = "LEAD_TRANSFER"
+	NotifLeadAdded      = "LEAD_ADDED"
+	NotifLeadUpdated    = "LEAD_UPDATED"
+	NotifLeadDeleted    = "LEAD_DELETED"
+	NotifLeadAssigned   = "LEAD_ASSIGNED"
+	NotifLeadTransfer   = "LEAD_TRANSFER"
 	NotifSETeamTransfer = "SE_TEAM_TRANSFER"
 )
 

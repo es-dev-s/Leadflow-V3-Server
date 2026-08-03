@@ -26,10 +26,10 @@ func NewHealthPoller(store *Store, crmBase string) *HealthPoller {
 		base = "http://127.0.0.1:9080"
 	}
 	return &HealthPoller{
-		store:     store,
-		crmHealth: base + "/health",
-		interval:  15 * time.Second,
-		client:    &http.Client{Timeout: 4 * time.Second},
+		store:      store,
+		crmHealth:  base + "/health",
+		interval:   15 * time.Second,
+		client:     &http.Client{Timeout: 4 * time.Second},
 		lastStatus: "unknown",
 	}
 }
@@ -105,13 +105,13 @@ func (p *HealthPoller) recordChange(ctx context.Context, from, to, msg string) {
 	}
 	code := 0
 	ev := IngestEvent{
-		Kind:      "health_change",
-		Severity:  sev,
-		Source:    "telemetry",
-		Message:   msg,
-		Meta:      mustJSON(map[string]any{"from": from, "to": to}),
-		Path:      "/health",
-		Method:    "GET",
+		Kind:     "health_change",
+		Severity: sev,
+		Source:   "telemetry",
+		Message:  msg,
+		Meta:     mustJSON(map[string]any{"from": from, "to": to}),
+		Path:     "/health",
+		Method:   "GET",
 	}
 	if to != "ok" {
 		code = 503

@@ -68,6 +68,19 @@ func requireString(v *ValidationError, field, value string, min, max int) string
 	return value
 }
 
+// optionalBoundedString trims value; empty is allowed, max length is enforced.
+func optionalBoundedString(v *ValidationError, field, value string, max int) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return value
+	}
+	n := utf8.RuneCountInString(value)
+	if max > 0 && n > max {
+		v.Add(field, field+" must be at most "+itoa(max)+" characters")
+	}
+	return value
+}
+
 func requireEmail(v *ValidationError, field, value string) string {
 	value = strings.TrimSpace(strings.ToLower(value))
 	if value == "" {

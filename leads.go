@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -959,9 +960,9 @@ func (s *LeadStore) List(ctx context.Context, params LeadListParams) (LeadListRe
 				return r.deal
 			}(),
 			Team:           r.team,
-			SalesExecutive:  r.exec,
-			Handoff:         formatHandoff(r.handoffAction, r.handoffDetail),
-			IsNew:           r.isNew,
+			SalesExecutive: r.exec,
+			Handoff:        formatHandoff(r.handoffAction, r.handoffDetail),
+			IsNew:          r.isNew,
 		})
 	}
 
@@ -1011,25 +1012,25 @@ func (s *LeadStore) List(ctx context.Context, params LeadListParams) (LeadListRe
 }
 
 type LeadSummary struct {
-	ActiveUsers       int64   `json:"activeUsers"`
-	LeadsTotal        int64   `json:"leadsTotal"`
-	IrrelevantLeads   int64   `json:"irrelevantLeads"`
-	QualifiedLeads    int64   `json:"qualifiedLeads"`
-	NotQualifiedLeads int64   `json:"notQualifiedLeads"`
-	TotalPassed       int64   `json:"totalPassed"`
+	ActiveUsers       int64 `json:"activeUsers"`
+	LeadsTotal        int64 `json:"leadsTotal"`
+	IrrelevantLeads   int64 `json:"irrelevantLeads"`
+	QualifiedLeads    int64 `json:"qualifiedLeads"`
+	NotQualifiedLeads int64 `json:"notQualifiedLeads"`
+	TotalPassed       int64 `json:"totalPassed"`
 	// Current sales-stage inventory (matches leads page stage filter).
-	WithTeamLeads  int64 `json:"withTeamLeads"`
-	WithSalesExecs int64 `json:"withSalesExecs"`
-	TotalLost         int64   `json:"totalLost"`
-	ClosedRevenue     float64 `json:"closedRevenue"`
-	TotalWon          int64   `json:"totalWon"`
-	NoResponse        int64   `json:"noResponse"`
+	WithTeamLeads  int64   `json:"withTeamLeads"`
+	WithSalesExecs int64   `json:"withSalesExecs"`
+	TotalLost      int64   `json:"totalLost"`
+	ClosedRevenue  float64 `json:"closedRevenue"`
+	TotalWon       int64   `json:"totalWon"`
+	NoResponse     int64   `json:"noResponse"`
 	// Kept for older clients / overview deltas.
-	OpenLeads         int64           `json:"openLeads"`
-	DealValueSum      float64         `json:"dealValueSum"`
-	LeadsLast7Days    int64           `json:"leadsLast7Days"`
-	QualificationMix  []NamedCount       `json:"qualificationMix"`
-	TeamMix           []TeamLeadCount    `json:"teamMix"`
+	OpenLeads        int64           `json:"openLeads"`
+	DealValueSum     float64         `json:"dealValueSum"`
+	LeadsLast7Days   int64           `json:"leadsLast7Days"`
+	QualificationMix []NamedCount    `json:"qualificationMix"`
+	TeamMix          []TeamLeadCount `json:"teamMix"`
 	// Heavy mixes (reasons, attribution, analysts, sales execs) are served via
 	// /api/leads/summary/buckets so the KPI payload stays fast.
 	SourceMix []AttributionStats `json:"sourceMix"`
@@ -2123,88 +2124,168 @@ func contactPhoneDigits(phone string) string {
 	return b.String()
 }
 
-// LeadContactMatch is a duplicate hit by phone and/or email.
+// LeadContactMatch is a duplicate hit on phone + portal + source.
 type LeadContactMatch struct {
-	ID        string  `json:"id"`
-	LeadName  string  `json:"leadName"`
-	TeamName  *string `json:"teamName"`
-	MatchedOn string  `json:"matchedOn"`
+	ID            string   `json:"id"`
+	LeadName      string   `json:"leadName"`
+	TeamName      *string  `json:"teamName"`
+	MatchedOn     string   `json:"matchedOn"`
+	MatchedFields []string `json:"matchedFields"`
 }
 
-// FindDuplicateByContact returns the newest lead matching phone (digits) or email.
-// excludeID skips that lead (used when editing).
-//
-// Implemented as two selective lookups (email exact, phone digits exact) so the
-// expression indexes Lead_leadEmail_lower_idx / Lead_phone_digits_idx can be
-// used. The previous single OR with regexp_replace over the whole table scanned
-// ~1M rows and routinely hit statement_timeout (~7–8s) on create/update.
-func (s *LeadStore) FindDuplicateByContact(
+// PhonePresence is the add-lead phone lookup: team plus portals/sources
+// already used with that number on the platform.
+type PhonePresence struct {
+	ID      string
+	LeadName string
+	TeamName *string
+	Portals []string
+	Sources []string
+}
+
+// FindLeadByPhone returns any lead with the same phone digits (team label
+// for the add-lead form). excludeID skips that lead (edit mode).
+func (s *LeadStore) FindLeadByPhone(
 	ctx context.Context,
-	phone, email, excludeID string,
+	phone, excludeID string,
 ) (*LeadContactMatch, error) {
+	presence, err := s.FindPhonePresence(ctx, phone, excludeID)
+	if err != nil || presence == nil {
+		return nil, err
+	}
+	return &LeadContactMatch{
+		ID:            presence.ID,
+		LeadName:      presence.LeadName,
+		TeamName:      presence.TeamName,
+		MatchedOn:     "phone",
+		MatchedFields: []string{"phone"},
+	}, nil
+}
+
+// FindPhonePresence lists team + distinct portals/sources for a phone number.
+func (s *LeadStore) FindPhonePresence(
+	ctx context.Context,
+	phone, excludeID string,
+) (*PhonePresence, error) {
 	digits := contactPhoneDigits(phone)
 	if len(digits) < 5 {
-		digits = ""
-	}
-	emailNorm := strings.ToLower(strings.TrimSpace(email))
-	if digits == "" && emailNorm == "" {
 		return nil, nil
 	}
 	exclude := strings.TrimSpace(excludeID)
 
-	lookup := func(matchedOn, whereSQL string, arg any) (*LeadContactMatch, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT
+			l.id,
+			l."leadName",
+			NULLIF(BTRIM(COALESCE(t.name, '')), ''),
+			BTRIM(COALESCE(l."portalWebsite", '')),
+			BTRIM(COALESCE(l.source, ''))
+		FROM "Lead" l
+		LEFT JOIN "Team" t ON t.id = l."teamId"
+		WHERE ($2 = '' OR l.id <> $2)
+		  AND l.phone IS NOT NULL
+		  AND regexp_replace(COALESCE(l.phone, ''), '[^0-9]', '', 'g') = $1
+		ORDER BY l."updatedAt" DESC NULLS LAST
+		LIMIT 50`,
+		digits, exclude,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var presence *PhonePresence
+	portalSet := map[string]struct{}{}
+	sourceSet := map[string]struct{}{}
+	for rows.Next() {
 		var (
-			id, name string
-			teamName *string
+			id, name, portal, source string
+			teamName                 *string
 		)
-		// No ORDER BY: any match is enough for a duplicate conflict, and
-		// ordering by updatedAt made Postgres walk the whole updatedAt index
-		// (~1M rows / 5–8s) instead of using the email/phone expression indexes.
-		err := s.pool.QueryRow(ctx, `
-			SELECT
-				l.id,
-				l."leadName",
-				NULLIF(BTRIM(COALESCE(t.name, '')), '')
-			FROM "Lead" l
-			LEFT JOIN "Team" t ON t.id = l."teamId"
-			WHERE ($2 = '' OR l.id <> $2)
-			  AND `+whereSQL+`
-			LIMIT 1`,
-			arg, exclude,
-		).Scan(&id, &name, &teamName)
-		if err == pgx.ErrNoRows {
-			return nil, nil
-		}
-		if err != nil {
+		if err := rows.Scan(&id, &name, &teamName, &portal, &source); err != nil {
 			return nil, err
 		}
-		return &LeadContactMatch{
-			ID:        id,
-			LeadName:  name,
-			TeamName:  teamName,
-			MatchedOn: matchedOn,
-		}, nil
+		if presence == nil {
+			presence = &PhonePresence{
+				ID:       id,
+				LeadName: name,
+				TeamName: teamName,
+			}
+		}
+		if portal != "" {
+			if _, ok := portalSet[portal]; !ok {
+				portalSet[portal] = struct{}{}
+				presence.Portals = append(presence.Portals, portal)
+			}
+		}
+		if source != "" {
+			if _, ok := sourceSet[source]; !ok {
+				sourceSet[source] = struct{}{}
+				presence.Sources = append(presence.Sources, source)
+			}
+		}
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return presence, nil
+}
 
-	// Prefer email when provided. Checking phone after an email miss used to
-	// fall back to a full-table expression scan (~6s) when the planner skipped
-	// Lead_phone_digits_idx. Phone-only creates still validate digits.
-	if emailNorm != "" {
-		return lookup("email", `l."leadEmail" IS NOT NULL AND lower(l."leadEmail") = $1`, emailNorm)
+// FindDuplicateByPhonePortalSource finds another lead with the same phone
+// digits, portal website, and lead source. Kept for diagnostics; create/update
+// no longer block on this. excludeID skips that lead (edit mode).
+func (s *LeadStore) FindDuplicateByPhonePortalSource(
+	ctx context.Context,
+	phone, portalWebsite, source, excludeID string,
+) (*LeadContactMatch, error) {
+	digits := contactPhoneDigits(phone)
+	if len(digits) < 5 {
+		return nil, nil
 	}
-	if digits != "" {
-		return lookup(
-			"phone",
-			`l.phone IS NOT NULL AND regexp_replace(COALESCE(l.phone, ''), '[^0-9]', '', 'g') = $1`,
-			digits,
-		)
+	sourceNorm := strings.TrimSpace(source)
+	if sourceNorm == "" {
+		return nil, nil
 	}
-	return nil, nil
+	portalNorm := strings.ToLower(strings.TrimSpace(portalWebsite))
+	exclude := strings.TrimSpace(excludeID)
+
+	var (
+		id, name string
+		teamName *string
+	)
+	err := s.pool.QueryRow(ctx, `
+		SELECT
+			l.id,
+			l."leadName",
+			NULLIF(BTRIM(COALESCE(t.name, '')), '')
+		FROM "Lead" l
+		LEFT JOIN "Team" t ON t.id = l."teamId"
+		WHERE ($4 = '' OR l.id <> $4)
+		  AND l.phone IS NOT NULL
+		  AND regexp_replace(COALESCE(l.phone, ''), '[^0-9]', '', 'g') = $1
+		  AND BTRIM(COALESCE(l.source, '')) = $2
+		  AND lower(BTRIM(COALESCE(l."portalWebsite", ''))) = $3
+		LIMIT 1`,
+		digits, sourceNorm, portalNorm, exclude,
+	).Scan(&id, &name, &teamName)
+	if err == pgx.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &LeadContactMatch{
+		ID:            id,
+		LeadName:      name,
+		TeamName:      teamName,
+		MatchedOn:     "phone+portal+source",
+		MatchedFields: []string{"phone", "portalWebsite", "source"},
+	}, nil
 }
 
 func (s *LeadStore) Create(ctx context.Context, in CreateLeadInput) (string, error) {
-	if strings.TrimSpace(in.FullName) == "" {
-		return "", fmt.Errorf("full name is required")
+	if n := utf8.RuneCountInString(strings.TrimSpace(in.FullName)); n > 200 {
+		return "", fmt.Errorf("full name must be at most 200 characters")
 	}
 	if _, ok := allowedLeadSources[in.Source]; !ok {
 		return "", fmt.Errorf("invalid source")
@@ -2680,8 +2761,8 @@ func (s *LeadStore) Update(ctx context.Context, id string, in CreateLeadInput) e
 	if strings.TrimSpace(id) == "" {
 		return fmt.Errorf("lead id is required")
 	}
-	if strings.TrimSpace(in.FullName) == "" {
-		return fmt.Errorf("full name is required")
+	if n := utf8.RuneCountInString(strings.TrimSpace(in.FullName)); n > 200 {
+		return fmt.Errorf("full name must be at most 200 characters")
 	}
 
 	var currentSource, currentQual string

@@ -14,19 +14,22 @@ import (
 )
 
 var (
-	errUserNotFound       = errors.New("user not found")
-	errEmailTaken         = errors.New("email already in use")
-	errInvalidCredentials = errors.New("invalid email or password")
-	errPasswordNotSet     = errors.New("password not set for this account")
-	errCannotDeleteSelf   = errors.New("cannot delete your own account")
-	errLastSuperadmin     = errors.New("cannot delete the last superadmin")
-	errDeleteBlocked      = errors.New("user cannot be deleted due to related records")
-	errTeamNameRequired   = errors.New("team name is required for Main Team Lead")
-	errNotSalesExecutive  = errors.New("user is not a sales executive")
-	errSameTeam           = errors.New("sales executive is already on that team")
-	errTeamNotFound       = errors.New("destination team not found")
-	errTeamConflict       = errors.New("sales executive team changed — refresh and try again")
-	errTransferForbidden  = errors.New("you cannot transfer this sales executive")
+	errUserNotFound          = errors.New("user not found")
+	errEmailTaken            = errors.New("email already in use")
+	errInvalidCredentials    = errors.New("invalid email or password")
+	errPasswordNotSet        = errors.New("password not set for this account")
+	errAccountInactive       = errors.New("account is inactive")
+	errCannotDeleteSelf      = errors.New("cannot delete your own account")
+	errCannotDeactivateSelf  = errors.New("cannot deactivate your own account")
+	errLastSuperadmin        = errors.New("cannot delete the last superadmin")
+	errLastActiveSuperadmin  = errors.New("cannot deactivate the last active superadmin")
+	errDeleteBlocked         = errors.New("user cannot be deleted due to related records")
+	errTeamNameRequired      = errors.New("team name is required for Main Team Lead")
+	errNotSalesExecutive     = errors.New("user is not a sales executive")
+	errSameTeam              = errors.New("sales executive is already on that team")
+	errTeamNotFound          = errors.New("destination team not found")
+	errTeamConflict          = errors.New("sales executive team changed — refresh and try again")
+	errTransferForbidden     = errors.New("you cannot transfer this sales executive")
 )
 
 type UserRecord struct {
@@ -42,6 +45,7 @@ type UserRecord struct {
 	ManagerID          *string
 	ManagerName        *string
 	IsOutboundAnalyst  bool
+	IsActive           bool
 	IsActiveSession    bool
 	ActiveSessionSetAt *time.Time
 	Image              *string
@@ -61,6 +65,7 @@ type PublicUser struct {
 	ManagerID          *string    `json:"managerId"`
 	ManagerName        *string    `json:"managerName"`
 	IsOutboundAnalyst  bool       `json:"isOutboundAnalyst"`
+	IsActive           bool       `json:"isActive"`
 	IsActiveSession    bool       `json:"isActiveSession"`
 	ActiveSessionSetAt *time.Time `json:"activeSessionSetAt"`
 	Image              *string    `json:"image"`
@@ -87,6 +92,7 @@ func (u UserRecord) Public() PublicUser {
 		ManagerID:          u.ManagerID,
 		ManagerName:        u.ManagerName,
 		IsOutboundAnalyst:  u.IsOutboundAnalyst,
+		IsActive:           u.IsActive,
 		IsActiveSession:    u.IsActiveSession,
 		ActiveSessionSetAt: u.ActiveSessionSetAt,
 		Image:              u.Image,
@@ -115,6 +121,7 @@ func (s *UserStore) FindByEmail(ctx context.Context, email string) (*UserRecord,
 		       u."teamId", t.name, u."analystTeamName",
 		       u."managerId", m.name,
 		       u."isOutboundAnalyst",
+		       COALESCE(u."isActive", TRUE),
 		       (u."activeSessionHash" IS NOT NULL AND u."activeSessionHash" <> ''),
 		       u."activeSessionSetAt", u.image,
 		       u."createdAt", u."updatedAt"
@@ -129,7 +136,7 @@ func (s *UserStore) FindByEmail(ctx context.Context, email string) (*UserRecord,
 		&u.ID, &u.Email, &u.Name, &u.Role, &u.PasswordHash, &u.MustResetPassword,
 		&u.TeamID, &u.TeamName, &u.AnalystTeamName,
 		&u.ManagerID, &u.ManagerName,
-		&u.IsOutboundAnalyst, &u.IsActiveSession, &u.ActiveSessionSetAt, &u.Image,
+		&u.IsOutboundAnalyst, &u.IsActive, &u.IsActiveSession, &u.ActiveSessionSetAt, &u.Image,
 		&u.CreatedAt, &u.UpdatedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -147,6 +154,7 @@ func (s *UserStore) FindByID(ctx context.Context, id string) (*UserRecord, error
 		       u."teamId", t.name, u."analystTeamName",
 		       u."managerId", m.name,
 		       u."isOutboundAnalyst",
+		       COALESCE(u."isActive", TRUE),
 		       (u."activeSessionHash" IS NOT NULL AND u."activeSessionHash" <> ''),
 		       u."activeSessionSetAt", u.image,
 		       u."createdAt", u."updatedAt"
@@ -161,7 +169,7 @@ func (s *UserStore) FindByID(ctx context.Context, id string) (*UserRecord, error
 		&u.ID, &u.Email, &u.Name, &u.Role, &u.PasswordHash, &u.MustResetPassword,
 		&u.TeamID, &u.TeamName, &u.AnalystTeamName,
 		&u.ManagerID, &u.ManagerName,
-		&u.IsOutboundAnalyst, &u.IsActiveSession, &u.ActiveSessionSetAt, &u.Image,
+		&u.IsOutboundAnalyst, &u.IsActive, &u.IsActiveSession, &u.ActiveSessionSetAt, &u.Image,
 		&u.CreatedAt, &u.UpdatedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -188,6 +196,9 @@ func (s *UserStore) Authenticate(ctx context.Context, email, password string) (*
 			return nil, errInvalidCredentials
 		}
 		return nil, err
+	}
+	if !user.IsActive {
+		return nil, errAccountInactive
 	}
 	if user.PasswordHash == nil || *user.PasswordHash == "" {
 		return nil, errPasswordNotSet
@@ -329,6 +340,7 @@ func (s *UserStore) List(ctx context.Context, limit int) ([]PublicUser, error) {
 		       u."teamId", t.name, u."analystTeamName",
 		       u."managerId", m.name,
 		       u."isOutboundAnalyst",
+		       COALESCE(u."isActive", TRUE),
 		       (u."activeSessionHash" IS NOT NULL AND u."activeSessionHash" <> ''),
 		       u."activeSessionSetAt", u.image,
 		       u."createdAt", u."updatedAt"
@@ -349,7 +361,7 @@ func (s *UserStore) List(ctx context.Context, limit int) ([]PublicUser, error) {
 			&u.ID, &u.Email, &u.Name, &u.Role, &u.PasswordHash, &u.MustResetPassword,
 			&u.TeamID, &u.TeamName, &u.AnalystTeamName,
 			&u.ManagerID, &u.ManagerName,
-			&u.IsOutboundAnalyst, &u.IsActiveSession, &u.ActiveSessionSetAt, &u.Image,
+			&u.IsOutboundAnalyst, &u.IsActive, &u.IsActiveSession, &u.ActiveSessionSetAt, &u.Image,
 			&u.CreatedAt, &u.UpdatedAt,
 		); err != nil {
 			return nil, err
@@ -401,6 +413,64 @@ type UpdateUserInput struct {
 	Role              string
 	Password          *string
 	MustResetPassword *bool
+}
+
+// SetActive soft-disables or re-enables an account. Data is preserved; inactive
+// users cannot log in and existing sessions are cleared on deactivate.
+func (s *UserStore) SetActive(ctx context.Context, id, actorID string, active bool) (*UserRecord, error) {
+	id = strings.TrimSpace(id)
+	actorID = strings.TrimSpace(actorID)
+	if id == "" {
+		return nil, errUserNotFound
+	}
+	if !active && id == actorID {
+		return nil, errCannotDeactivateSelf
+	}
+
+	user, err := s.FindByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if user.IsActive == active {
+		return user, nil
+	}
+
+	if !active && user.Role == RoleSuperadmin {
+		n, err := s.CountActiveByRole(ctx, RoleSuperadmin)
+		if err != nil {
+			return nil, err
+		}
+		if n <= 1 {
+			return nil, errLastActiveSuperadmin
+		}
+	}
+
+	if active {
+		_, err = s.pool.Exec(ctx, `
+			UPDATE "User"
+			SET "isActive" = TRUE, "updatedAt" = NOW()
+			WHERE id = $1`, id)
+	} else {
+		_, err = s.pool.Exec(ctx, `
+			UPDATE "User"
+			SET "isActive" = FALSE,
+			    "activeSessionHash" = NULL,
+			    "activeSessionSetAt" = NULL,
+			    "updatedAt" = NOW()
+			WHERE id = $1`, id)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return s.FindByID(ctx, id)
+}
+
+func (s *UserStore) CountActiveByRole(ctx context.Context, role string) (int64, error) {
+	var n int64
+	err := s.pool.QueryRow(ctx, `
+		SELECT COUNT(*)::bigint FROM "User"
+		WHERE role = $1 AND COALESCE("isActive", TRUE) = TRUE`, role).Scan(&n)
+	return n, err
 }
 
 func (s *UserStore) Update(ctx context.Context, id string, in UpdateUserInput) (*UserRecord, error) {
@@ -594,12 +664,12 @@ func (s *UserStore) Delete(ctx context.Context, id, actorID string) error {
 }
 
 type TransferSalesExecInput struct {
-	SalesExecID     string
-	ToTeamID        string
-	ExpectedTeamID  string // optional optimistic concurrency token (current team)
-	ActorID         string
-	ActorRole       string
-	ActorTeamID     *string
+	SalesExecID    string
+	ToTeamID       string
+	ExpectedTeamID string // optional optimistic concurrency token (current team)
+	ActorID        string
+	ActorRole      string
+	ActorTeamID    *string
 }
 
 type TransferSalesExecResult struct {
@@ -660,9 +730,9 @@ func (s *UserStore) TransferSalesExec(ctx context.Context, in TransferSalesExecI
 
 	// Lock SE row first.
 	var (
-		role          string
-		fromTeamID    *string
-		name, email   string
+		role        string
+		fromTeamID  *string
+		name, email string
 	)
 	err = tx.QueryRow(ctx, `
 		SELECT role, "teamId", name, email

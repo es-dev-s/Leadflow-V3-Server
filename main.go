@@ -15,6 +15,7 @@ import (
 
 func main() {
 	loadEnvFile(".env")
+	corsConfig = loadCORSConfig()
 
 	databaseURL := envOr("DATABASE_URL", "")
 	if databaseURL == "" {
@@ -25,6 +26,8 @@ func main() {
 	if jwtSecret == "" {
 		log.Fatal("JWT_SECRET is required in backend/.env")
 	}
+	tokenTTL := 24 * time.Hour
+	authCookie := loadAuthCookieConfig(tokenTTL)
 
 	poolConfig, err := pgxpool.ParseConfig(databaseURL)
 	if err != nil {
@@ -56,15 +59,16 @@ func main() {
 		log.Printf("database unavailable at startup: %v (API still serving; /health may report degraded)", err)
 	} else {
 		log.Println("Connected to PostgreSQL")
-		ensureCtx, ensureCancel := context.WithTimeout(ctx, 8*time.Second)
-		leadStore := NewLeadStore(pool)
-		if err := leadStore.EnsureLeadViewSchema(ensureCtx); err != nil {
-			log.Printf("ensure LeadView schema: %v", err)
+		migrateCtx, migrateCancel := context.WithTimeout(ctx, 2*time.Minute)
+		if err := RunCRMMigrations(migrateCtx, pool); err != nil {
+			log.Printf("migrations failed: %v", err)
 		}
-		if err := leadStore.EnsureKpiTargetSchema(ensureCtx); err != nil {
-			log.Printf("ensure KpiTarget schema: %v", err)
+		migrateCancel()
+		seedCtx, seedCancel := context.WithTimeout(ctx, 15*time.Second)
+		if err := NewLeadStore(pool).SeedKpiTargets(seedCtx); err != nil {
+			log.Printf("seed KpiTarget rows: %v", err)
 		}
-		ensureCancel()
+		seedCancel()
 	}
 
 	memCache := NewResponseCache()
@@ -89,7 +93,8 @@ func main() {
 		leads:         NewLeadStore(pool),
 		transfers:     NewTransferStore(pool),
 		notifications: NewNotificationStore(pool),
-		tokens:        NewTokenService(jwtSecret, 24*time.Hour),
+		tokens:        NewTokenService(jwtSecret, tokenTTL),
+		authCookie:    authCookie,
 		loginGate:     newLoginLimiter(12, 10*time.Minute),
 		poolPing: func(c context.Context) error {
 			pingCtx, cancel := context.WithTimeout(c, 2*time.Second)
@@ -110,8 +115,9 @@ func main() {
 	mux.HandleFunc("/health", withCORS(server.handleHealth))
 	mux.HandleFunc("/api/health", withCORS(server.handleHealth))
 	mux.HandleFunc("/api/auth/login", withCORS(server.handleLogin))
+	mux.HandleFunc("/api/auth/logout", withCORS(server.handleLogout))
 
-	// Authenticated — same UI for all roles for now; scope-based RBAC later.
+	// Authenticated — cookie (browser) or Authorization Bearer (API clients).
 	mux.HandleFunc("/api/auth/me", server.requireAuth(server.handleMe))
 	mux.HandleFunc("/api/roles", server.requireAuth(server.handleRoles))
 	mux.HandleFunc("/api/users", server.requireAuth(server.handleUsers))
@@ -136,8 +142,7 @@ func main() {
 	mux.HandleFunc("/api/notifications", server.requireAuth(server.handleNotifications))
 	mux.HandleFunc("/api/notifications/read", server.requireAuth(server.handleNotificationsRead))
 	mux.HandleFunc("/api/dashboard", server.requireAuth(server.handleDashboard))
-	// Realtime stream (auth via bearer or ?access_token= since EventSource
-	// cannot set headers). Does its own auth + streams for the connection life.
+	// Realtime stream — cookie or Bearer (no query-string tokens).
 	mux.HandleFunc("/api/events", withCORS(server.handleEvents))
 
 	// Listen address — change PORT in backend/.env without rebuilding.

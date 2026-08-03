@@ -17,18 +17,18 @@ type Store struct {
 }
 
 type TelemetryEvent struct {
-	ID          string          `json:"id"`
-	OccurredAt  time.Time       `json:"occurredAt"`
-	Kind        string          `json:"kind"`
-	Severity    string          `json:"severity"`
-	Source      string          `json:"source"`
-	StatusCode  *int            `json:"statusCode,omitempty"`
-	Path        string          `json:"path,omitempty"`
-	Method      string          `json:"method,omitempty"`
-	UserID      string          `json:"userId,omitempty"`
-	UserEmail   string          `json:"userEmail,omitempty"`
-	Message     string          `json:"message,omitempty"`
-	Meta        json.RawMessage `json:"meta,omitempty"`
+	ID         string          `json:"id"`
+	OccurredAt time.Time       `json:"occurredAt"`
+	Kind       string          `json:"kind"`
+	Severity   string          `json:"severity"`
+	Source     string          `json:"source"`
+	StatusCode *int            `json:"statusCode,omitempty"`
+	Path       string          `json:"path,omitempty"`
+	Method     string          `json:"method,omitempty"`
+	UserID     string          `json:"userId,omitempty"`
+	UserEmail  string          `json:"userEmail,omitempty"`
+	Message    string          `json:"message,omitempty"`
+	Meta       json.RawMessage `json:"meta,omitempty"`
 }
 
 type IngestEvent struct {
@@ -71,67 +71,24 @@ type StatusTotal struct {
 }
 
 type Overview struct {
-	GeneratedAt          time.Time         `json:"generatedAt"`
-	ActiveUsers          int64             `json:"activeUsers"`
-	ConcurrentUsers      int64             `json:"concurrentUsers"`
-	PlatformStatus       string            `json:"platformStatus"`
-	OpenDowntimeMinutes  float64           `json:"openDowntimeMinutes"`
-	DowntimeEvents24h    int64             `json:"downtimeEvents24h"`
-	ConnectionBreaks24h  int64             `json:"connectionBreaks24h"`
-	ServerRestarts24h    int64             `json:"serverRestarts24h"`
-	HTTPErrors24h        int64             `json:"httpErrors24h"`
-	StatusTotals24h      []StatusTotal     `json:"statusTotals24h"`
-	StatusSeries24h      []StatusBucket    `json:"statusSeries24h"`
-	ConnectionSeries24h  []KindBucket      `json:"connectionSeries24h"`
-	Incidents            []UptimeIncident  `json:"incidents"`
-	RecentEvents         []TelemetryEvent  `json:"recentEvents"`
+	GeneratedAt         time.Time        `json:"generatedAt"`
+	ActiveUsers         int64            `json:"activeUsers"`
+	ConcurrentUsers     int64            `json:"concurrentUsers"`
+	PlatformStatus      string           `json:"platformStatus"`
+	OpenDowntimeMinutes float64          `json:"openDowntimeMinutes"`
+	DowntimeEvents24h   int64            `json:"downtimeEvents24h"`
+	ConnectionBreaks24h int64            `json:"connectionBreaks24h"`
+	ServerRestarts24h   int64            `json:"serverRestarts24h"`
+	HTTPErrors24h       int64            `json:"httpErrors24h"`
+	StatusTotals24h     []StatusTotal    `json:"statusTotals24h"`
+	StatusSeries24h     []StatusBucket   `json:"statusSeries24h"`
+	ConnectionSeries24h []KindBucket     `json:"connectionSeries24h"`
+	Incidents           []UptimeIncident `json:"incidents"`
+	RecentEvents        []TelemetryEvent `json:"recentEvents"`
 }
 
 func NewStore(pool *pgxpool.Pool) *Store {
 	return &Store{pool: pool}
-}
-
-func (s *Store) EnsureSchema(ctx context.Context) error {
-	_, err := s.pool.Exec(ctx, `
-CREATE SCHEMA IF NOT EXISTS support_telemetry;
-
-CREATE TABLE IF NOT EXISTS support_telemetry.telemetry_event (
-  id           text PRIMARY KEY,
-  occurred_at  timestamptz NOT NULL DEFAULT NOW(),
-  kind         text NOT NULL,
-  severity     text NOT NULL DEFAULT 'info',
-  source       text NOT NULL DEFAULT 'unknown',
-  status_code  int,
-  path         text,
-  method       text,
-  user_id      text,
-  user_email   text,
-  message      text,
-  meta         jsonb NOT NULL DEFAULT '{}'::jsonb
-);
-
-CREATE INDEX IF NOT EXISTS telemetry_event_occurred_idx
-  ON support_telemetry.telemetry_event (occurred_at DESC);
-CREATE INDEX IF NOT EXISTS telemetry_event_kind_occurred_idx
-  ON support_telemetry.telemetry_event (kind, occurred_at DESC);
-CREATE INDEX IF NOT EXISTS telemetry_event_status_occurred_idx
-  ON support_telemetry.telemetry_event (status_code, occurred_at DESC)
-  WHERE status_code IS NOT NULL;
-
-CREATE TABLE IF NOT EXISTS support_telemetry.uptime_incident (
-  id          text PRIMARY KEY,
-  started_at  timestamptz NOT NULL,
-  ended_at    timestamptz,
-  reason      text NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS uptime_incident_started_idx
-  ON support_telemetry.uptime_incident (started_at DESC);
-CREATE INDEX IF NOT EXISTS uptime_incident_open_idx
-  ON support_telemetry.uptime_incident (started_at DESC)
-  WHERE ended_at IS NULL;
-`)
-	return err
 }
 
 func (s *Store) InsertEvents(ctx context.Context, events []IngestEvent) (int, error) {
@@ -221,15 +178,15 @@ ORDER BY occurred_at DESC LIMIT 1`).Scan(&t)
 
 func (s *Store) Overview(ctx context.Context, activeUsers, concurrent int64, platformStatus string) (*Overview, error) {
 	out := &Overview{
-		GeneratedAt:     nowUTC(),
-		ActiveUsers:     activeUsers,
-		ConcurrentUsers: concurrent,
-		PlatformStatus:  platformStatus,
-		StatusTotals24h: []StatusTotal{},
-		StatusSeries24h: []StatusBucket{},
+		GeneratedAt:         nowUTC(),
+		ActiveUsers:         activeUsers,
+		ConcurrentUsers:     concurrent,
+		PlatformStatus:      platformStatus,
+		StatusTotals24h:     []StatusTotal{},
+		StatusSeries24h:     []StatusBucket{},
 		ConnectionSeries24h: []KindBucket{},
-		Incidents:       []UptimeIncident{},
-		RecentEvents:    []TelemetryEvent{},
+		Incidents:           []UptimeIncident{},
+		RecentEvents:        []TelemetryEvent{},
 	}
 
 	since := nowUTC().Add(-24 * time.Hour)

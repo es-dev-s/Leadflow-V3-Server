@@ -42,16 +42,16 @@ type LeadTransferLog struct {
 }
 
 type TransferListResult struct {
-	Type       string           `json:"type"`
-	Items      any              `json:"items"`
-	Total      int64            `json:"total"`
-	NextCursor string           `json:"nextCursor,omitempty"`
-	HasMore    bool             `json:"hasMore"`
-	Limit      int              `json:"limit"`
-	Query      string           `json:"query,omitempty"`
-	Action     string           `json:"action,omitempty"`
-	Totals     TransferTotals   `json:"totals"`
-	ActionMix  []ActionMixItem  `json:"actionMix,omitempty"`
+	Type       string          `json:"type"`
+	Items      any             `json:"items"`
+	Total      int64           `json:"total"`
+	NextCursor string          `json:"nextCursor,omitempty"`
+	HasMore    bool            `json:"hasMore"`
+	Limit      int             `json:"limit"`
+	Query      string          `json:"query,omitempty"`
+	Action     string          `json:"action,omitempty"`
+	Totals     TransferTotals  `json:"totals"`
+	ActionMix  []ActionMixItem `json:"actionMix,omitempty"`
 }
 
 type TransferTotals struct {

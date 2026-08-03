@@ -10,13 +10,13 @@ import (
 )
 
 type AssignableUser struct {
-	ID       string  `json:"id"`
-	Name     string  `json:"name"`
-	Email    string  `json:"email"`
-	Role     string  `json:"role"`
-	RoleLabel string `json:"roleLabel"`
-	TeamID   *string `json:"teamId"`
-	TeamName *string `json:"teamName"`
+	ID        string  `json:"id"`
+	Name      string  `json:"name"`
+	Email     string  `json:"email"`
+	Role      string  `json:"role"`
+	RoleLabel string  `json:"roleLabel"`
+	TeamID    *string `json:"teamId"`
+	TeamName  *string `json:"teamName"`
 }
 
 type AssignLeadInput struct {
@@ -63,7 +63,8 @@ func (s *LeadStore) ListAssignableUsers(ctx context.Context, kind, teamID string
 			t.name
 		FROM "User" u
 		LEFT JOIN "Team" t ON t.id = u."teamId"
-		WHERE u.role = ANY($1)`
+		WHERE u.role = ANY($1)
+		  AND COALESCE(u."isActive", TRUE) = TRUE`
 	if scoped := strings.TrimSpace(teamID); scoped != "" {
 		args = append(args, scoped)
 		sql += fmt.Sprintf(` AND u."teamId" = $%d`, len(args))
