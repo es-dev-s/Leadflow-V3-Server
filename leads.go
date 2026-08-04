@@ -90,6 +90,8 @@ type LeadListParams struct {
 	MetaProfile string // "none" = blank/unassigned
 	Status      string // exact qualificationStatus
 	Stage       string // exact salesStage
+	// ServiceLine scopes portals to a report brand: CDR | CCL | PTE | ACS.
+	ServiceLine string
 	// Exact extracted qualification reason (from notes), matching dashboard reasons buckets.
 	QualificationReason string
 	AddedFrom           string // YYYY-MM-DD inclusive
@@ -577,6 +579,10 @@ func appendLeadFacets(where *[]string, args *[]any, params LeadListParams) {
 	appendBlankOrEqual(where, args, `l.source`, params.Source)
 	appendBlankOrEqual(where, args, `l."portalWebsite"`, params.Portal)
 	appendBlankOrEqual(where, args, `l."sourceMetaProfileName"`, params.MetaProfile)
+	// Exact portal wins over brand group.
+	if strings.TrimSpace(params.Portal) == "" {
+		appendServiceLineFacet(where, args, params.ServiceLine)
+	}
 
 	if status := strings.TrimSpace(params.Status); status != "" {
 		*args = append(*args, strings.ToUpper(status))
@@ -607,6 +613,26 @@ func appendLeadFacets(where *[]string, args *[]any, params LeadListParams) {
 	}
 
 	appendQualificationReasonFacet(where, args, params.QualificationReason)
+}
+
+// appendServiceLineFacet scopes leads to report brands by portal name.
+// Skipped when an exact portal facet is already set.
+//
+// Important: do NOT match bare "%RPL%" — that false-positives on portals like
+// "CDRPlanetAustralia.com" (substring "RPl" inside "CDRPlanet"). ACS portals in
+// this dataset are named with "ACS" / "ACSRPL".
+func appendServiceLineFacet(where *[]string, args *[]any, line string) {
+	_ = args
+	switch strings.ToUpper(strings.TrimSpace(line)) {
+	case "CDR":
+		*where = append(*where, `l."portalWebsite" ILIKE '%CDR%'`)
+	case "CCL":
+		*where = append(*where, `(l."portalWebsite" ILIKE '%CCL%' OR l."portalWebsite" ILIKE '%NAATI%')`)
+	case "PTE":
+		*where = append(*where, `l."portalWebsite" ILIKE '%PTE%'`)
+	case "ACS":
+		*where = append(*where, `l."portalWebsite" ILIKE '%ACS%'`)
+	}
 }
 
 func appendQualificationReasonFacet(where *[]string, args *[]any, reason string) {

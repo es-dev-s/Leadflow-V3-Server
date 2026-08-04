@@ -86,6 +86,7 @@ func (s *Server) listLeads(w http.ResponseWriter, r *http.Request) {
 		MetaProfile:         q.Get("metaProfile"),
 		Status:              q.Get("status"),
 		Stage:               q.Get("stage"),
+		ServiceLine:         q.Get("serviceLine"),
 		QualificationReason: firstNonEmpty(q.Get("reason"), q.Get("qualificationReason")),
 		AddedFrom:           q.Get("addedFrom"),
 		AddedTo:             q.Get("addedTo"),

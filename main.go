@@ -142,6 +142,7 @@ func main() {
 	mux.HandleFunc("/api/notifications", server.requireAuth(server.handleNotifications))
 	mux.HandleFunc("/api/notifications/read", server.requireAuth(server.handleNotificationsRead))
 	mux.HandleFunc("/api/dashboard", server.requireAuth(server.handleDashboard))
+	mux.HandleFunc("/api/report", server.requireAuth(server.handleReport))
 	// Realtime stream — cookie or Bearer (no query-string tokens).
 	mux.HandleFunc("/api/events", withCORS(server.handleEvents))
 
