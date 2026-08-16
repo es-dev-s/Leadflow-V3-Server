@@ -420,7 +420,7 @@ func (s *Server) handleLeadByID(w http.ResponseWriter, r *http.Request) {
 	}
 	// Reserved collection paths are registered separately; reject collisions.
 	switch id {
-	case "assign", "summary", "geography", "geo-options", "contact-lookup", "pipeline", "added-series":
+	case "assign", "summary", "geography", "geo-options", "contact-lookup", "pipeline", "added-series", "export":
 		writeError(w, http.StatusNotFound, "not found")
 		return
 	}

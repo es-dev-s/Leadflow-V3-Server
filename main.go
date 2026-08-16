@@ -136,6 +136,7 @@ func main() {
 	mux.HandleFunc("/api/leads/geography", server.requireAuth(server.handleLeadsGeography))
 	mux.HandleFunc("/api/leads/geo-options", server.requireAuth(server.handleLeadsGeoOptions))
 	mux.HandleFunc("/api/leads/added-series", server.requireAuth(server.handleLeadsAddedSeries))
+	mux.HandleFunc("/api/leads/export", server.requireAuth(server.handleLeadsExport))
 	mux.HandleFunc("/api/leads/", server.requireAuth(server.handleLeadByID))
 	mux.HandleFunc("/api/assignable-users", server.requireAuth(server.handleAssignableUsers))
 	mux.HandleFunc("/api/transfers", server.requireAuth(server.handleTransfers))

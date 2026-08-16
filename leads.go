@@ -709,34 +709,15 @@ func (s *LeadStore) List(ctx context.Context, params LeadListParams) (LeadListRe
 		whereSQL = "WHERE " + strings.Join(where, " AND ")
 	}
 
-	hasFacets := params.Country != "" || params.City != "" ||
-		params.TeamID != "" || params.AnalystID != "" || params.SalesExecID != "" ||
-		params.Source != "" || params.Portal != "" || params.MetaProfile != "" ||
-		params.Status != "" || params.Stage != "" ||
-		params.AddedFrom != "" || params.AddedTo != ""
-
-	// Run the total count concurrently with the page query — it shares no
-	// state with the list below (which appends cursor/viewer args to a copy).
+	// Exact COUNT(*) with the same WHERE as the page. pg_class.reltuples is a
+	// stale planner estimate and drifted from dashboard/export totals.
 	var total int64
 	countDone := make(chan error, 1)
-	if filter == "all" && q == "" && !hasFacets && whereSQL == "" {
-		go func() {
-			err := s.pool.QueryRow(ctx, `
-				SELECT COALESCE(reltuples, 0)::bigint
-				FROM pg_class
-				WHERE oid = '"Lead"'::regclass`).Scan(&total)
-			if err == nil && total < 0 {
-				total = 0
-			}
-			countDone <- err
-		}()
-	} else {
-		countSQL := `SELECT COUNT(*)::bigint FROM "Lead" l ` + whereSQL
-		countArgs := append([]any{}, filterArgs...)
-		go func() {
-			countDone <- s.pool.QueryRow(ctx, countSQL, countArgs...).Scan(&total)
-		}()
-	}
+	countSQL := `SELECT COUNT(*)::bigint FROM "Lead" l ` + whereSQL
+	countArgs := append([]any{}, filterArgs...)
+	go func() {
+		countDone <- s.pool.QueryRow(ctx, countSQL, countArgs...).Scan(&total)
+	}()
 
 	viewerJoin := ""
 	viewerSelect := "FALSE"
