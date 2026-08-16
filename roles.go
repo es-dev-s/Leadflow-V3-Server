@@ -86,17 +86,23 @@ func canChangeQualification(role string) bool {
 	}
 }
 
-// canCreateLeads — who may create new leads (SEs work assigned inventory only).
+// canCreateLeads — Superadmin, ATL, and Lead Analyst may add leads.
+// Main Team Leads assign within the team; Sales Executives work assigned inventory.
 func canCreateLeads(role string) bool {
-	return canMutateLeads(role) && !isSalesExecutive(role)
+	switch role {
+	case RoleSuperadmin, RoleAnalystTeamLead, RoleLeadAnalyst:
+		return true
+	default:
+		return false
+	}
 }
 
 // canEditLeadProfile — full lead profile edit (contact, source, notes, etc.).
-// Main Team Leads assign within the team; they do not edit lead profile data.
-// Sales Executives update sales outcome only.
+// Superadmin and ATL only. Lead Analysts may create, not edit. Other roles
+// assign or update sales outcome only.
 func canEditLeadProfile(role string) bool {
 	switch role {
-	case RoleSuperadmin, RoleAnalystTeamLead, RoleLeadAnalyst:
+	case RoleSuperadmin, RoleAnalystTeamLead:
 		return true
 	default:
 		return false

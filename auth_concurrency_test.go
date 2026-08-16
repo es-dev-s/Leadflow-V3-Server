@@ -206,11 +206,17 @@ func TestCanCreateUsersRBAC(t *testing.T) {
 	if canEditLeadProfile(RoleMainTeamLead) || canDeleteLeads(RoleMainTeamLead) {
 		t.Fatal("main team lead must not edit profile or delete leads")
 	}
-	if !canCreateLeads(RoleMainTeamLead) {
-		t.Fatal("main team lead should create leads")
+	if canCreateLeads(RoleMainTeamLead) || canCreateLeads(RoleSalesExecutive) {
+		t.Fatal("main team lead and sales executive must not create leads")
 	}
-	if !canEditLeadProfile(RoleLeadAnalyst) || canDeleteLeads(RoleLeadAnalyst) {
-		t.Fatal("lead analyst should edit profile but not delete leads")
+	if !canCreateLeads(RoleSuperadmin) || !canCreateLeads(RoleAnalystTeamLead) || !canCreateLeads(RoleLeadAnalyst) {
+		t.Fatal("superadmin, ATL, and lead analyst should create leads")
+	}
+	if canEditLeadProfile(RoleLeadAnalyst) || canDeleteLeads(RoleLeadAnalyst) {
+		t.Fatal("lead analyst must not edit profile or delete leads")
+	}
+	if !canEditLeadProfile(RoleSuperadmin) || !canEditLeadProfile(RoleAnalystTeamLead) {
+		t.Fatal("superadmin and ATL should edit lead profiles")
 	}
 	if !canDeleteLeads(RoleSuperadmin) || !canDeleteLeads(RoleAnalystTeamLead) {
 		t.Fatal("superadmin and ATL should delete leads")
