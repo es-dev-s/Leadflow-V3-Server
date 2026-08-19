@@ -304,13 +304,20 @@ func (s *Server) createLead(w http.ResponseWriter, r *http.Request) {
 	req.FullName = optionalBoundedString(v, "fullName", req.FullName, 200)
 	req.Source = requireString(v, "source", req.Source, 2, 80)
 	req.QualificationStatus = requireString(v, "qualificationStatus", req.QualificationStatus, 2, 40)
+	emailVal := ""
+	if req.Email != nil {
+		emailVal = *req.Email
+	}
+	phoneVal := ""
+	if req.Phone != nil {
+		phoneVal = *req.Phone
+	}
+	email := optionalEmail(v, "email", emailVal)
+	phone := optionalPhone(v, "phone", phoneVal)
 	if v.HasErrors() {
 		writeValidationError(w, v)
 		return
 	}
-
-	email := optionalTrimmed(req.Email)
-	phone := optionalTrimmed(req.Phone)
 
 	var createdAt *time.Time
 	if req.CreatedAt != nil && strings.TrimSpace(*req.CreatedAt) != "" {
@@ -472,7 +479,7 @@ func (s *Server) handleLeadByID(w http.ResponseWriter, r *http.Request) {
 			s.patchLeadSalesOutcome(w, r, id, body)
 			return
 		}
-		if hasQual && !hasFullName {
+		if isQualificationOnlyPatch(peek) {
 			s.patchLeadQualification(w, r, id, body)
 			return
 		}
@@ -485,6 +492,18 @@ func (s *Server) handleLeadByID(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
+}
+
+func isQualificationOnlyPatch(peek map[string]json.RawMessage) bool {
+	if _, ok := peek["qualificationStatus"]; !ok {
+		return false
+	}
+	for key := range peek {
+		if key != "qualificationStatus" {
+			return false
+		}
+	}
+	return true
 }
 
 type QualificationPatchRequest struct {
@@ -759,13 +778,20 @@ func (s *Server) updateLead(w http.ResponseWriter, r *http.Request, id string) {
 	req.FullName = optionalBoundedString(v, "fullName", req.FullName, 200)
 	req.Source = requireString(v, "source", req.Source, 2, 80)
 	req.QualificationStatus = requireString(v, "qualificationStatus", req.QualificationStatus, 2, 40)
+	emailVal := ""
+	if req.Email != nil {
+		emailVal = *req.Email
+	}
+	phoneVal := ""
+	if req.Phone != nil {
+		phoneVal = *req.Phone
+	}
+	email := optionalEmail(v, "email", emailVal)
+	phone := optionalPhone(v, "phone", phoneVal)
 	if v.HasErrors() {
 		writeValidationError(w, v)
 		return
 	}
-
-	email := optionalTrimmed(req.Email)
-	phone := optionalTrimmed(req.Phone)
 
 	var createdAt *time.Time
 	if req.CreatedAt != nil && strings.TrimSpace(*req.CreatedAt) != "" {

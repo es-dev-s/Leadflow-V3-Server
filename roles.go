@@ -95,11 +95,11 @@ func canCreateLeads(role string) bool {
 }
 
 // canEditLeadProfile — full lead profile edit (contact, source, notes, etc.).
-// Superadmin and ATL only. Lead Analysts may create, not edit. Other roles
-// assign or update sales outcome only.
+// Superadmin and ATL may edit any lead they can access. Lead Analysts may
+// edit leads they created (creator scope is enforced in requireLeadAccess).
 func canEditLeadProfile(role string) bool {
 	switch role {
-	case RoleSuperadmin, RoleAnalystTeamLead:
+	case RoleSuperadmin, RoleAnalystTeamLead, RoleLeadAnalyst:
 		return true
 	default:
 		return false
@@ -142,8 +142,18 @@ func canViewLeadData(role string) bool {
 	return isValidRole(role)
 }
 
+func isAnalystTeamLead(role string) bool {
+	return role == RoleAnalystTeamLead
+}
+
 func isLeadAnalyst(role string) bool {
 	return role == RoleLeadAnalyst
+}
+
+// namedTeamRequiredForRole is true when creating that role must include a team
+// name. Main Team Leads get a sales Team; Analyst Team Leads get an analyst team.
+func namedTeamRequiredForRole(role string) bool {
+	return role == RoleMainTeamLead || role == RoleAnalystTeamLead
 }
 
 func isMainTeamLead(role string) bool {

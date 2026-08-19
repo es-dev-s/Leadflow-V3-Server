@@ -266,11 +266,11 @@ func (s *Server) handleLeadsAddedSeries(w http.ResponseWriter, r *http.Request) 
 	}
 
 	granularity := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("granularity")))
-	filter := s.geoFilterFromRequest(r)
+	params := s.leadListParamsFromRequest(r)
 	reqCtx, cancel := context.WithTimeout(r.Context(), 12*time.Second)
 	defer cancel()
 
-	result, err := s.leads.AddedSeries(reqCtx, granularity, filter)
+	result, err := s.leads.AddedSeries(reqCtx, granularity, params)
 	if err != nil {
 		log.Printf("leads added series: %v", err)
 		writeError(w, http.StatusInternalServerError, "failed to load added series")

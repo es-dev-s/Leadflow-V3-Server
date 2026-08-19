@@ -133,12 +133,37 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request, actor AuthUs
 	if req.TeamName != nil {
 		teamName = strings.TrimSpace(*req.TeamName)
 	}
-	if req.Role == RoleMainTeamLead {
-		if teamName == "" && req.TeamID == nil {
-			v.Add("teamName", "team name is required for Main Team Lead")
-		} else if teamName != "" {
+	if isAnalystTeamLead(actor.Role) && req.Role == RoleLeadAnalyst && teamName == "" {
+		if actorRec, err := s.users.FindByID(r.Context(), actor.ID); err == nil {
+			if actorRec.AnalystTeamName != nil {
+				teamName = strings.TrimSpace(*actorRec.AnalystTeamName)
+			}
+		} else if !errors.Is(err, errUserNotFound) {
+			log.Printf("create user actor lookup: %v", err)
+			writeError(w, http.StatusInternalServerError, "failed to create user")
+			return
+		}
+	}
+	if namedTeamRequiredForRole(req.Role) {
+		if req.Role == RoleMainTeamLead {
+			if teamName == "" && req.TeamID == nil {
+				v.Add("teamName", "team name is required for Main Team Lead")
+			} else if teamName != "" {
+				teamName = requireString(v, "teamName", teamName, 2, 120)
+			}
+		} else {
+			if teamName == "" {
+				v.Add("teamName", "team name is required for Analyst Team Lead")
+			} else {
+				teamName = requireString(v, "teamName", teamName, 2, 120)
+			}
+			req.TeamID = nil
+		}
+	} else if req.Role == RoleLeadAnalyst {
+		if teamName != "" {
 			teamName = requireString(v, "teamName", teamName, 2, 120)
 		}
+		req.TeamID = nil
 	} else {
 		teamName = ""
 	}
@@ -165,7 +190,7 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request, actor AuthUs
 			return
 		}
 		if errors.Is(err, errTeamNameRequired) {
-			writeError(w, http.StatusBadRequest, "team name is required for Main Team Lead")
+			writeError(w, http.StatusBadRequest, "team name is required")
 			return
 		}
 		log.Printf("create user: %v", err)
@@ -262,6 +287,30 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request, id string, a
 		pwd := requirePassword(v, "password", *req.Password)
 		password = &pwd
 	}
+	var teamName *string
+	if req.TeamName != nil {
+		trimmed := strings.TrimSpace(*req.TeamName)
+		if req.Role == RoleAnalystTeamLead {
+			if trimmed == "" {
+				v.Add("teamName", "team name is required for Analyst Team Lead")
+			} else {
+				name := requireString(v, "teamName", trimmed, 2, 120)
+				teamName = &name
+			}
+		} else if req.Role == RoleLeadAnalyst {
+			if trimmed == "" {
+				empty := ""
+				teamName = &empty
+			} else {
+				name := requireString(v, "teamName", trimmed, 2, 120)
+				teamName = &name
+			}
+		}
+	} else if req.Role == RoleAnalystTeamLead {
+		if existing.AnalystTeamName == nil || strings.TrimSpace(*existing.AnalystTeamName) == "" {
+			v.Add("teamName", "team name is required for Analyst Team Lead")
+		}
+	}
 	if v.HasErrors() {
 		writeValidationError(w, v)
 		return
@@ -290,6 +339,7 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request, id string, a
 		Role:              req.Role,
 		Password:          password,
 		MustResetPassword: req.MustResetPassword,
+		TeamName:          teamName,
 	})
 	if err != nil {
 		switch {
@@ -297,6 +347,8 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request, id string, a
 			writeError(w, http.StatusNotFound, "user not found")
 		case errors.Is(err, errEmailTaken):
 			writeError(w, http.StatusConflict, "email already in use")
+		case errors.Is(err, errTeamNameRequired):
+			writeError(w, http.StatusBadRequest, "team name is required")
 		default:
 			log.Printf("update user: %v", err)
 			writeError(w, http.StatusInternalServerError, "failed to update user")

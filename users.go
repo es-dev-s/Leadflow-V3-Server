@@ -24,7 +24,7 @@ var (
 	errLastSuperadmin        = errors.New("cannot delete the last superadmin")
 	errLastActiveSuperadmin  = errors.New("cannot deactivate the last active superadmin")
 	errDeleteBlocked         = errors.New("user cannot be deleted due to related records")
-	errTeamNameRequired      = errors.New("team name is required for Main Team Lead")
+	errTeamNameRequired      = errors.New("team name is required")
 	errNotSalesExecutive     = errors.New("user is not a sales executive")
 	errSameTeam              = errors.New("sales executive is already on that team")
 	errTeamNotFound          = errors.New("destination team not found")
@@ -239,12 +239,28 @@ func (s *UserStore) Create(ctx context.Context, in CreateUserInput) (*UserRecord
 
 	teamID := in.TeamID
 	teamName := strings.TrimSpace(in.TeamName)
-	if in.Role == RoleMainTeamLead {
+	var analystTeamName *string
+	switch in.Role {
+	case RoleMainTeamLead:
 		if teamName == "" && (teamID == nil || strings.TrimSpace(*teamID) == "") {
 			return nil, errTeamNameRequired
 		}
-	} else {
-		// Only Main Team Leads are auto-linked to a named sales team here.
+	case RoleAnalystTeamLead:
+		if teamName == "" {
+			return nil, errTeamNameRequired
+		}
+		name := teamName
+		analystTeamName = &name
+		teamName = ""
+		teamID = nil
+	case RoleLeadAnalyst:
+		if teamName != "" {
+			name := teamName
+			analystTeamName = &name
+		}
+		teamName = ""
+		teamID = nil
+	default:
 		teamName = ""
 	}
 
@@ -260,9 +276,9 @@ func (s *UserStore) Create(ctx context.Context, in CreateUserInput) (*UserRecord
 		INSERT INTO "User" (
 			id, email, name, role, "passwordHash",
 			"mustResetPassword", "isOutboundAnalyst",
-			"teamId", "createdAt", "updatedAt"
-		) VALUES ($1,$2,$3,$4,$5,false,false,$6,$7,$7)`,
-		id, in.Email, in.Name, in.Role, hash, teamID, now,
+			"teamId", "analystTeamName", "createdAt", "updatedAt"
+		) VALUES ($1,$2,$3,$4,$5,false,false,$6,$7,$8,$8)`,
+		id, in.Email, in.Name, in.Role, hash, teamID, analystTeamName, now,
 	)
 	if err != nil {
 		var pgErr *pgconn.PgError
@@ -413,6 +429,7 @@ type UpdateUserInput struct {
 	Role              string
 	Password          *string
 	MustResetPassword *bool
+	TeamName          *string
 }
 
 // SetActive soft-disables or re-enables an account. Data is preserved; inactive
@@ -495,6 +512,11 @@ func (s *UserStore) Update(ctx context.Context, id string, in UpdateUserInput) (
 		mustReset = *in.MustResetPassword
 	}
 
+	analystTeamName, err := resolveAnalystTeamName(existing, in.Role, in.TeamName)
+	if err != nil {
+		return nil, err
+	}
+
 	if in.Password != nil && strings.TrimSpace(*in.Password) != "" {
 		hash, err := hashPassword(*in.Password)
 		if err != nil {
@@ -507,11 +529,12 @@ func (s *UserStore) Update(ctx context.Context, id string, in UpdateUserInput) (
 			    role = $4,
 			    "passwordHash" = $5,
 			    "mustResetPassword" = $6,
+			    "analystTeamName" = $7,
 			    "activeSessionHash" = NULL,
 			    "activeSessionSetAt" = NULL,
 			    "updatedAt" = NOW()
 			WHERE id = $1`,
-			id, in.Name, in.Email, in.Role, hash, mustReset,
+			id, in.Name, in.Email, in.Role, hash, mustReset, analystTeamName,
 		)
 		if err != nil {
 			var pgErr *pgconn.PgError
@@ -527,9 +550,10 @@ func (s *UserStore) Update(ctx context.Context, id string, in UpdateUserInput) (
 			    email = $3,
 			    role = $4,
 			    "mustResetPassword" = $5,
+			    "analystTeamName" = $6,
 			    "updatedAt" = NOW()
 			WHERE id = $1`,
-			id, in.Name, in.Email, in.Role, mustReset,
+			id, in.Name, in.Email, in.Role, mustReset, analystTeamName,
 		)
 		if err != nil {
 			var pgErr *pgconn.PgError
@@ -540,6 +564,33 @@ func (s *UserStore) Update(ctx context.Context, id string, in UpdateUserInput) (
 		}
 	}
 	return s.FindByID(ctx, id)
+}
+
+func resolveAnalystTeamName(existing *UserRecord, role string, teamName *string) (*string, error) {
+	current := existing.AnalystTeamName
+	if teamName == nil {
+		if role == RoleAnalystTeamLead {
+			if current == nil || strings.TrimSpace(*current) == "" {
+				return nil, errTeamNameRequired
+			}
+		}
+		return current, nil
+	}
+	name := strings.TrimSpace(*teamName)
+	switch role {
+	case RoleAnalystTeamLead:
+		if name == "" {
+			return nil, errTeamNameRequired
+		}
+		return &name, nil
+	case RoleLeadAnalyst:
+		if name == "" {
+			return nil, nil
+		}
+		return &name, nil
+	default:
+		return current, nil
+	}
 }
 
 // Delete removes a user after preserving leads and neutralizing team ownership.

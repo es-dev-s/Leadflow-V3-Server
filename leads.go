@@ -1178,12 +1178,36 @@ type AnalystLeadStats struct {
 }
 
 type SalesExecOutcome struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	Assigned int    `json:"assigned"`
-	WithRep  int    `json:"withRep"`
-	Won      int    `json:"won"`
-	Lost     int    `json:"lost"`
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	Assigned     int    `json:"assigned"`
+	WithTeamLead int    `json:"withTeamLead"`
+	WithRep      int    `json:"withRep"`
+	InProgress   int    `json:"inProgress"`
+	Won          int    `json:"won"`
+	Lost         int    `json:"lost"`
+	Other        int    `json:"other"`
+}
+
+// salesExecOutcomeCountSQL partitions every lead into mutually exclusive
+// sales stages so assigned = withTeamLead + withRep + inProgress + won + lost + other.
+const salesExecOutcomeCountSQL = `
+			COUNT(*)::int AS assigned,
+			COUNT(*) FILTER (WHERE l."salesStage" = 'WITH_TEAM_LEAD')::int AS with_tl,
+			COUNT(*) FILTER (WHERE l."salesStage" = 'WITH_EXECUTIVE')::int AS with_rep,
+			COUNT(*) FILTER (WHERE l."salesStage" IN ('NOT_CONNECTED', 'IN_NEGOTIATION', 'NO_RESPONSE_FROM_CLIENT'))::int AS in_progress,
+			COUNT(*) FILTER (WHERE l."salesStage" = 'CLOSED_WON')::int AS won,
+			COUNT(*) FILTER (WHERE l."salesStage" = 'CLOSED_LOST')::int AS lost`
+
+func completeSalesExecOutcome(item *SalesExecOutcome) {
+	if item.ID == "" {
+		item.Name = "Unnamed"
+	}
+	accounted := item.WithTeamLead + item.WithRep + item.InProgress + item.Won + item.Lost
+	item.Other = item.Assigned - accounted
+	if item.Other < 0 {
+		item.Other = 0
+	}
 }
 
 type StatusReasonCount struct {
@@ -1196,7 +1220,7 @@ type StatusReasonCount struct {
 func leadScopeWhere(params LeadListParams, applyPreset bool) (whereSQL string, args []any) {
 	where := make([]string, 0, 12)
 	args = make([]any, 0, 12)
-	if applyPreset {
+	if applyPreset && strings.TrimSpace(params.Status) == "" {
 		appendLeadFilter(&where, &args, normalizeLeadFilter(params.Filter))
 	}
 	appendLeadFacets(&where, &args, params)
@@ -1206,13 +1230,41 @@ func leadScopeWhere(params LeadListParams, applyPreset bool) (whereSQL string, a
 	return "WHERE " + strings.Join(where, " AND "), args
 }
 
+func leadScopeAndSQL(params LeadListParams) (andSQL string, args []any) {
+	where, args := leadScopeWhere(params, true)
+	if where == "" {
+		return "", nil
+	}
+	return " AND " + strings.TrimPrefix(where, "WHERE "), args
+}
+
+func leadScopeWhereAssignedToSalesExec(params LeadListParams) (string, []any) {
+	where, args := leadScopeWhere(params, true)
+	clause := `l."assignedSalesExecId" IS NOT NULL`
+	if where == "" {
+		return "WHERE " + clause, args
+	}
+	return where + " AND " + clause, args
+}
+
+func leadScopeWhereAssignedToTeam(params LeadListParams) (string, []any) {
+	where, args := leadScopeWhere(params, true)
+	clause := `l."teamId" IS NOT NULL`
+	if where == "" {
+		return "WHERE " + clause, args
+	}
+	return where + " AND " + clause, args
+}
+
 func (s *LeadStore) Summary(ctx context.Context, params LeadListParams) (LeadSummary, error) {
 	var out LeadSummary
 
 	// Total passed (legacy SE handoff) — same lead facets as other KPIs.
 	passArgs := []any{"DIRECT_ASSIGNED_TO_EXECUTIVE_BY_ATL", "ASSIGNED_TO_EXECUTIVE"}
 	passWhere := make([]string, 0, 8)
-	appendLeadFilter(&passWhere, &passArgs, normalizeLeadFilter(params.Filter))
+	if strings.TrimSpace(params.Status) == "" {
+		appendLeadFilter(&passWhere, &passArgs, normalizeLeadFilter(params.Filter))
+	}
 	appendLeadFacets(&passWhere, &passArgs, params)
 	passSQL := `
 		SELECT COUNT(DISTINCT h."leadId")::bigint
@@ -1360,13 +1412,15 @@ type AddedSeriesResponse struct {
 	Average     float64           `json:"average"`
 }
 
-func (s *LeadStore) AddedSeries(ctx context.Context, granularity string, filter GeoFilter) (AddedSeriesResponse, error) {
+func (s *LeadStore) AddedSeries(ctx context.Context, granularity string, params LeadListParams) (AddedSeriesResponse, error) {
 	granularity = strings.ToLower(strings.TrimSpace(granularity))
 	if granularity != "month" {
 		granularity = "day"
 	}
 
-	geoAnd, geoArgs := filter.andSQL("l.", 0)
+	scopeAnd, scopeArgs := leadScopeAndSQL(params)
+	dayExpr := createdAtBusinessDateSQL()
+	todayExpr := currentBusinessDateSQL()
 
 	var (
 		query string
@@ -1375,12 +1429,11 @@ func (s *LeadStore) AddedSeries(ctx context.Context, granularity string, filter 
 	out.Granularity = granularity
 
 	if granularity == "month" {
-		// Last 12 calendar months inclusive of current month.
 		query = `
 			WITH bounds AS (
 				SELECT
-					date_trunc('month', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kathmandu')::date)::date AS end_month,
-					(date_trunc('month', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kathmandu')::date) - INTERVAL '11 months')::date AS start_month
+					date_trunc('month', ` + todayExpr + `)::date AS end_month,
+					(date_trunc('month', ` + todayExpr + `) - INTERVAL '11 months')::date AS start_month
 			),
 			months AS (
 				SELECT generate_series(
@@ -1390,11 +1443,11 @@ func (s *LeadStore) AddedSeries(ctx context.Context, granularity string, filter 
 				)::date AS bucket
 			),
 			counts AS (
-				SELECT date_trunc('month', timezone('Asia/Kathmandu', l."createdAt"))::date AS bucket, COUNT(*)::int AS cnt
+				SELECT date_trunc('month', ` + dayExpr + `)::date AS bucket, COUNT(*)::int AS cnt
 				FROM "Lead" l
 				CROSS JOIN bounds b
-				WHERE (timezone('Asia/Kathmandu', l."createdAt"))::date >= b.start_month
-				  AND (timezone('Asia/Kathmandu', l."createdAt"))::date < (b.end_month + INTERVAL '1 month')` + geoAnd + `
+				WHERE ` + dayExpr + ` >= b.start_month
+				  AND ` + dayExpr + ` < (b.end_month + INTERVAL '1 month')` + scopeAnd + `
 				GROUP BY 1
 			)
 			SELECT
@@ -1405,12 +1458,11 @@ func (s *LeadStore) AddedSeries(ctx context.Context, granularity string, filter 
 			LEFT JOIN counts c ON c.bucket = m.bucket
 			ORDER BY m.bucket ASC`
 	} else {
-		// Last 30 calendar days inclusive of today.
 		query = `
 			WITH bounds AS (
 				SELECT
-					(CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kathmandu')::date AS end_day,
-					((CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kathmandu')::date - INTERVAL '29 days')::date AS start_day
+					` + todayExpr + ` AS end_day,
+					(` + todayExpr + ` - INTERVAL '29 days')::date AS start_day
 			),
 			days AS (
 				SELECT generate_series(
@@ -1420,11 +1472,11 @@ func (s *LeadStore) AddedSeries(ctx context.Context, granularity string, filter 
 				)::date AS bucket
 			),
 			counts AS (
-				SELECT (timezone('Asia/Kathmandu', l."createdAt"))::date AS bucket, COUNT(*)::int AS cnt
+				SELECT ` + dayExpr + ` AS bucket, COUNT(*)::int AS cnt
 				FROM "Lead" l
 				CROSS JOIN bounds b
-				WHERE (timezone('Asia/Kathmandu', l."createdAt"))::date >= b.start_day
-				  AND (timezone('Asia/Kathmandu', l."createdAt"))::date <= b.end_day` + geoAnd + `
+				WHERE ` + dayExpr + ` >= b.start_day
+				  AND ` + dayExpr + ` <= b.end_day` + scopeAnd + `
 				GROUP BY 1
 			)
 			SELECT
@@ -1436,7 +1488,7 @@ func (s *LeadStore) AddedSeries(ctx context.Context, granularity string, filter 
 			ORDER BY d.bucket ASC`
 	}
 
-	rows, err := s.pool.Query(ctx, query, geoArgs...)
+	rows, err := s.pool.Query(ctx, query, scopeArgs...)
 	if err != nil {
 		return out, err
 	}
@@ -1496,14 +1548,14 @@ func (s *LeadStore) ListCities(ctx context.Context, filter GeoFilter) ([]NamedCo
 }
 
 func (s *LeadStore) teamLeadCounts(ctx context.Context, params LeadListParams) ([]TeamLeadCount, error) {
-	where, args := leadScopeWhere(params, true)
+	where, args := leadScopeWhereAssignedToTeam(params)
 	rows, err := s.pool.Query(ctx, `
 		SELECT
-			COALESCE(t.id, '') AS team_id,
-			COALESCE(NULLIF(BTRIM(t.name), ''), 'Unassigned') AS team_name,
+			t.id AS team_id,
+			COALESCE(NULLIF(BTRIM(t.name), ''), 'Unnamed') AS team_name,
 			COUNT(*)::int AS lead_count
 		FROM "Lead" l
-		LEFT JOIN "Team" t ON t.id = l."teamId"
+		INNER JOIN "Team" t ON t.id = l."teamId"
 		`+where+`
 		GROUP BY t.id, t.name
 		ORDER BY lead_count DESC, team_name ASC`, args...)
@@ -1519,7 +1571,7 @@ func (s *LeadStore) teamLeadCounts(ctx context.Context, params LeadListParams) (
 			return nil, err
 		}
 		if item.ID == "" {
-			item.Name = "Unassigned"
+			continue
 		}
 		out = append(out, item)
 	}
@@ -1601,26 +1653,23 @@ func (s *LeadStore) analystLeadStats(ctx context.Context, filter GeoFilter) ([]A
 }
 
 func (s *LeadStore) salesExecOutcomes(ctx context.Context, filter GeoFilter) ([]SalesExecOutcome, error) {
-	where, args := filter.whereSQL("l.")
+	params := LeadListParams{
+		Country:     filter.Country,
+		City:        filter.City,
+		AnalystID:   filter.CreatedByID,
+		TeamID:      filter.TeamID,
+		SalesExecID: filter.SalesExecID,
+	}
+	where, args := leadScopeWhereAssignedToSalesExec(params)
 	rows, err := s.pool.Query(ctx, `
 		SELECT
-			COALESCE(u.id, '') AS exec_id,
-			CASE
-				WHEN u.id IS NULL THEN 'Unassigned'
-				ELSE COALESCE(NULLIF(BTRIM(u.name), ''), 'Unnamed')
-			END AS exec_name,
-			COUNT(*)::int AS assigned,
-			COUNT(*) FILTER (WHERE l."salesStage" = 'WITH_EXECUTIVE')::int AS with_rep,
-			COUNT(*) FILTER (WHERE l."salesStage" = 'CLOSED_WON')::int AS won,
-			COUNT(*) FILTER (WHERE l."salesStage" = 'CLOSED_LOST')::int AS lost
+			u.id AS exec_id,
+			COALESCE(NULLIF(BTRIM(u.name), ''), 'Unnamed') AS exec_name,`+salesExecOutcomeCountSQL+`
 		FROM "Lead" l
-		LEFT JOIN "User" u ON u.id = l."assignedSalesExecId"
+		INNER JOIN "User" u ON u.id = l."assignedSalesExecId"
 		`+where+`
 		GROUP BY u.id, u.name
-		ORDER BY
-			CASE WHEN u.id IS NULL THEN 0 ELSE 1 END,
-			assigned DESC,
-			exec_name ASC`, args...)
+		ORDER BY assigned DESC, exec_name ASC`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -1630,13 +1679,13 @@ func (s *LeadStore) salesExecOutcomes(ctx context.Context, filter GeoFilter) ([]
 	for rows.Next() {
 		var item SalesExecOutcome
 		if err := rows.Scan(
-			&item.ID, &item.Name, &item.Assigned, &item.WithRep, &item.Won, &item.Lost,
+			&item.ID, &item.Name, &item.Assigned,
+			&item.WithTeamLead, &item.WithRep, &item.InProgress,
+			&item.Won, &item.Lost,
 		); err != nil {
 			return nil, err
 		}
-		if item.ID == "" {
-			item.Name = "Unassigned"
-		}
+		completeSalesExecOutcome(&item)
 		out = append(out, item)
 	}
 	return out, rows.Err()
@@ -1684,28 +1733,19 @@ func (s *LeadStore) SummaryBuckets(
 	offset = clampSummaryBucketOffset(offset)
 	dimension = strings.ToLower(strings.TrimSpace(dimension))
 
-	// Other mix queries still use geo+creator+team; reasons use full lead scope.
-	geo := GeoFilter{
-		Country:     params.Country,
-		City:        params.City,
-		CreatedByID: params.AnalystID,
-		TeamID:      params.TeamID,
-		SalesExecID: params.SalesExecID,
-	}
-
 	switch dimension {
 	case "reasons", "qualificationreasons", "qualification-reasons":
 		return s.paginatedQualificationReasons(ctx, params, status, offset, limit)
 	case "portal", "website":
-		return s.paginatedAttributionMix(ctx, geo, `"portalWebsite"`, "portal", offset, limit)
+		return s.paginatedAttributionMix(ctx, params, `"portalWebsite"`, "portal", offset, limit)
 	case "metaprofile", "meta-profile", "meta_profile":
-		return s.paginatedAttributionMix(ctx, geo, `"sourceMetaProfileName"`, "metaProfile", offset, limit)
+		return s.paginatedAttributionMix(ctx, params, `"sourceMetaProfileName"`, "metaProfile", offset, limit)
 	case "source":
-		return s.paginatedAttributionMix(ctx, geo, `source`, "source", offset, limit)
+		return s.paginatedAttributionMix(ctx, params, `"source"`, "source", offset, limit)
 	case "analyst", "analysts":
-		return s.paginatedAnalystLeadStats(ctx, geo, offset, limit)
+		return s.paginatedAnalystLeadStats(ctx, params, offset, limit)
 	case "salesexec", "sales-exec", "sales_exec", "salesexecoutcomes":
-		return s.paginatedSalesExecOutcomes(ctx, geo, offset, limit)
+		return s.paginatedSalesExecOutcomes(ctx, params, offset, limit)
 	default:
 		return SummaryBucketPage{}, fmt.Errorf("unknown summary dimension %q", dimension)
 	}
@@ -1809,11 +1849,12 @@ func (s *LeadStore) paginatedQualificationReasons(
 
 func (s *LeadStore) paginatedAttributionMix(
 	ctx context.Context,
-	filter GeoFilter,
+	params LeadListParams,
 	columnSQL, dimension string,
 	offset, limit int,
 ) (SummaryBucketPage, error) {
-	where, args := filter.whereSQL("")
+	where, args := leadScopeWhere(params, true)
+	col := "l." + columnSQL
 
 	metaQuery := `
 		SELECT COUNT(*)::int,
@@ -1821,10 +1862,10 @@ func (s *LeadStore) paginatedAttributionMix(
 		       COALESCE(SUM(won), 0)::int
 		FROM (
 			SELECT
-				COALESCE(NULLIF(BTRIM(` + columnSQL + `), ''), 'Unassigned') AS name,
+				COALESCE(NULLIF(BTRIM(` + col + `), ''), 'Unassigned') AS name,
 				COUNT(*)::int AS total,
-				COUNT(*) FILTER (WHERE "salesStage" = 'CLOSED_WON')::int AS won
-			FROM "Lead"
+				COUNT(*) FILTER (WHERE l."salesStage" = 'CLOSED_WON')::int AS won
+			FROM "Lead" l
 			` + where + `
 			GROUP BY 1
 		) buckets`
@@ -1840,10 +1881,10 @@ func (s *LeadStore) paginatedAttributionMix(
 
 	rows, err := s.pool.Query(ctx, `
 		SELECT
-			COALESCE(NULLIF(BTRIM(`+columnSQL+`), ''), 'Unassigned') AS name,
+			COALESCE(NULLIF(BTRIM(`+col+`), ''), 'Unassigned') AS name,
 			COUNT(*)::int AS total,
-			COUNT(*) FILTER (WHERE "salesStage" = 'CLOSED_WON')::int AS won
-		FROM "Lead"
+			COUNT(*) FILTER (WHERE l."salesStage" = 'CLOSED_WON')::int AS won
+		FROM "Lead" l
 		`+where+`
 		GROUP BY 1
 		ORDER BY 2 DESC, 1 ASC
@@ -1887,10 +1928,10 @@ func (s *LeadStore) paginatedAttributionMix(
 
 func (s *LeadStore) paginatedAnalystLeadStats(
 	ctx context.Context,
-	filter GeoFilter,
+	params LeadListParams,
 	offset, limit int,
 ) (SummaryBucketPage, error) {
-	where, args := filter.whereSQL("l.")
+	where, args := leadScopeWhere(params, true)
 
 	metaQuery := `
 		SELECT COUNT(*)::int, COALESCE(SUM(total), 0)::int
@@ -1974,19 +2015,19 @@ func (s *LeadStore) paginatedAnalystLeadStats(
 
 func (s *LeadStore) paginatedSalesExecOutcomes(
 	ctx context.Context,
-	filter GeoFilter,
+	params LeadListParams,
 	offset, limit int,
 ) (SummaryBucketPage, error) {
-	where, args := filter.whereSQL("l.")
+	where, args := leadScopeWhereAssignedToSalesExec(params)
 
 	metaQuery := `
 		SELECT COUNT(*)::int, COALESCE(SUM(assigned), 0)::int
 		FROM (
 			SELECT
-				COALESCE(u.id, '') AS exec_id,
+				u.id AS exec_id,
 				COUNT(*)::int AS assigned
 			FROM "Lead" l
-			LEFT JOIN "User" u ON u.id = l."assignedSalesExecId"
+			INNER JOIN "User" u ON u.id = l."assignedSalesExecId"
 			` + where + `
 			GROUP BY u.id
 		) buckets`
@@ -2002,17 +2043,10 @@ func (s *LeadStore) paginatedSalesExecOutcomes(
 
 	rows, err := s.pool.Query(ctx, `
 		SELECT
-			COALESCE(u.id, '') AS exec_id,
-			CASE
-				WHEN u.id IS NULL THEN 'Unassigned'
-				ELSE COALESCE(NULLIF(BTRIM(u.name), ''), 'Unnamed')
-			END AS exec_name,
-			COUNT(*)::int AS assigned,
-			COUNT(*) FILTER (WHERE l."salesStage" = 'WITH_EXECUTIVE')::int AS with_rep,
-			COUNT(*) FILTER (WHERE l."salesStage" = 'CLOSED_WON')::int AS won,
-			COUNT(*) FILTER (WHERE l."salesStage" = 'CLOSED_LOST')::int AS lost
+			u.id AS exec_id,
+			COALESCE(NULLIF(BTRIM(u.name), ''), 'Unnamed') AS exec_name,`+salesExecOutcomeCountSQL+`
 		FROM "Lead" l
-		LEFT JOIN "User" u ON u.id = l."assignedSalesExecId"
+		INNER JOIN "User" u ON u.id = l."assignedSalesExecId"
 		`+where+`
 		GROUP BY u.id, u.name
 		ORDER BY assigned DESC, exec_name ASC
@@ -2026,13 +2060,13 @@ func (s *LeadStore) paginatedSalesExecOutcomes(
 	for rows.Next() {
 		var item SalesExecOutcome
 		if err := rows.Scan(
-			&item.ID, &item.Name, &item.Assigned, &item.WithRep, &item.Won, &item.Lost,
+			&item.ID, &item.Name, &item.Assigned,
+			&item.WithTeamLead, &item.WithRep, &item.InProgress,
+			&item.Won, &item.Lost,
 		); err != nil {
 			return SummaryBucketPage{}, err
 		}
-		if item.ID == "" {
-			item.Name = "Unassigned"
-		}
+		completeSalesExecOutcome(&item)
 		out = append(out, item)
 	}
 	if err := rows.Err(); err != nil {

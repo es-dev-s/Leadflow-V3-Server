@@ -81,6 +81,34 @@ func optionalBoundedString(v *ValidationError, field, value string, max int) str
 	return value
 }
 
+func optionalEmail(v *ValidationError, field, value string) *string {
+	value = strings.TrimSpace(strings.ToLower(value))
+	if value == "" {
+		return nil
+	}
+	if !emailPattern.MatchString(value) {
+		v.Add(field, "email format is invalid")
+	}
+	return &value
+}
+
+func optionalPhone(v *ValidationError, field, value string) *string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	digits := 0
+	for _, r := range value {
+		if r >= '0' && r <= '9' {
+			digits++
+		}
+	}
+	if digits < 5 {
+		v.Add(field, "phone must include at least 5 digits")
+	}
+	return &value
+}
+
 func requireEmail(v *ValidationError, field, value string) string {
 	value = strings.TrimSpace(strings.ToLower(value))
 	if value == "" {

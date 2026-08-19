@@ -79,3 +79,53 @@ func TestLeadFacetsInWhere(t *testing.T) {
 		t.Fatalf("expected country+status args, got %#v", args)
 	}
 }
+
+func TestLeadScopeWhereAppliesPresetWithoutStatus(t *testing.T) {
+	sql, args := leadScopeWhere(LeadListParams{Filter: "qualified"}, true)
+	if !strings.Contains(sql, `l."qualificationStatus" IN`) {
+		t.Fatalf("qualified preset missing: %s %#v", sql, args)
+	}
+	joined := strings.Join(func() []string {
+		out := make([]string, 0, len(args))
+		for _, a := range args {
+			if s, ok := a.(string); ok {
+				out = append(out, s)
+			}
+		}
+		return out
+	}(), ",")
+	if !strings.Contains(joined, "QUALIFIED_CALL") {
+		t.Fatalf("qualified args missing QUALIFIED_CALL: %#v", args)
+	}
+}
+
+func TestLeadScopeWhereSkipsPresetWhenStatusSet(t *testing.T) {
+	sql, args := leadScopeWhere(LeadListParams{
+		Filter: "qualified",
+		Status: "IRRELEVANT",
+	}, true)
+	joined := strings.Join(func() []string {
+		out := make([]string, 0, len(args))
+		for _, a := range args {
+			if s, ok := a.(string); ok {
+				out = append(out, s)
+			}
+		}
+		return out
+	}(), ",")
+	if strings.Contains(joined, "QUALIFIED_CALL") {
+		t.Fatalf("preset must not apply when exact status is set: %s %#v", sql, args)
+	}
+	if !strings.Contains(sql, `l."qualificationStatus"`) {
+		t.Fatalf("status facet missing: %s", sql)
+	}
+}
+
+func TestQuoteTimeZoneNameRejectsInjection(t *testing.T) {
+	if got := quoteTimeZoneName("Asia/Kathmandu'; DROP TABLE"); got != defaultBusinessTZ {
+		t.Fatalf("expected fallback, got %q", got)
+	}
+	if got := quoteTimeZoneName("Asia/Kathmandu"); got != "Asia/Kathmandu" {
+		t.Fatalf("got %q", got)
+	}
+}
