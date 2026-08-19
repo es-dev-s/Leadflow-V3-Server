@@ -1,0 +1,97 @@
+# Mesh CI/CD — generated for 3a0eaf0e-leadflow-v3-server on 10.80.80.220
+# Commit this file as .github/workflows/mesh-deploy.yml
+# Jobs run on the Mesh self-hosted runner and reload PM2 in place.
+# Do not use Docker. Production cwd is ~/mesh-deployments/3a0eaf0e-leadflow-v3-server
+
+name: Mesh deploy
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+concurrency:
+  group: mesh-3a0eaf0e-leadflow-v3-server
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on:
+      - self-hosted
+      - linux
+      - mesh
+      - mesh-10-80-80-220
+    env:
+      MESH_APP: 3a0eaf0e-leadflow-v3-server
+      MESH_PM2: mesh-3a0eaf0e-leadflow-v3-server
+      MESH_DIR: /home/es/mesh-deployments/3a0eaf0e-leadflow-v3-server
+    steps:
+      - name: Pull into Mesh deploy directory
+        run: |
+          set -euo pipefail
+          if [ ! -d "$MESH_DIR/.git" ]; then
+            echo "Deploy 3a0eaf0e-leadflow-v3-server once from Mesh Projects (GitHub source) before CI/CD."
+            exit 1
+          fi
+          cd "$MESH_DIR"
+          git fetch origin
+          BRANCH="${{ github.ref_name }}"
+          git checkout -B "$BRANCH" "origin/$BRANCH"
+          git reset --hard "origin/$BRANCH"
+          git clean -fd -e .mesh-env -e .mesh-install -e .mesh-build -e .mesh-start -e .mesh-repo -e .mesh-source -e .mesh-port -e .mesh-project-root -e .env
+
+      - name: Resolve app directory
+        run: |
+          set -euo pipefail
+          WORK_DIR="$MESH_DIR"
+          if [ -f "$MESH_DIR/.mesh-project-root" ]; then
+            REL="$(tr -d '\r\n' < "$MESH_DIR/.mesh-project-root")"
+            if [ -n "$REL" ] && [ -d "$MESH_DIR/$REL" ]; then
+              WORK_DIR="$MESH_DIR/$REL"
+            fi
+          fi
+          echo "MESH_WORK_DIR=$WORK_DIR" >> "$GITHUB_ENV"
+
+      - name: Install dependencies
+        working-directory: ${{ env.MESH_WORK_DIR }}
+        run: |
+          set -euo pipefail
+          export PATH="/usr/local/go/bin:$HOME/go/bin:$HOME/.local/share/fnm/aliases/default/bin:$HOME/.nvm/versions/node/$(ls $HOME/.nvm/versions/node 2>/dev/null | sort -V | tail -1)/bin:$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
+          bash -lc 'go mod download'
+
+      - name: Test
+        working-directory: ${{ env.MESH_WORK_DIR }}
+        run: |
+          set -euo pipefail
+          export PATH="/usr/local/go/bin:$HOME/go/bin:$HOME/.local/share/fnm/aliases/default/bin:$HOME/.nvm/versions/node/$(ls $HOME/.nvm/versions/node 2>/dev/null | sort -V | tail -1)/bin:$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
+          if [ -f package.json ]; then
+            npm test --if-present
+          elif [ -f go.mod ]; then
+            go test ./...
+          elif [ -f Cargo.toml ]; then
+            cargo test
+          else
+            echo "No standard test runner — skipping"
+          fi
+
+      - name: Build
+        working-directory: ${{ env.MESH_WORK_DIR }}
+        run: |
+          set -euo pipefail
+          export PATH="/usr/local/go/bin:$HOME/go/bin:$HOME/.local/share/fnm/aliases/default/bin:$HOME/.nvm/versions/node/$(ls $HOME/.nvm/versions/node 2>/dev/null | sort -V | tail -1)/bin:$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
+          bash -lc 'go build -ldflags="-w -s" -o out .'
+
+      - name: Reload PM2
+        run: |
+          set -euo pipefail
+          export PATH="/usr/local/go/bin:$HOME/go/bin:$HOME/.local/share/fnm/aliases/default/bin:$HOME/.nvm/versions/node/$(ls $HOME/.nvm/versions/node 2>/dev/null | sort -V | tail -1)/bin:$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
+          if ! command -v pm2 >/dev/null 2>&1; then
+            echo "pm2 is not on PATH for the runner user"
+            exit 1
+          fi
+          if ! pm2 describe "$MESH_PM2" >/dev/null 2>&1; then
+            echo "PM2 process $MESH_PM2 is not running. Deploy this app once from Mesh first."
+            exit 1
+          fi
+          pm2 reload "$MESH_PM2" --update-env || pm2 restart "$MESH_PM2" --update-env
+          pm2 save
