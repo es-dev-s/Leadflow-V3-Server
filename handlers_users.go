@@ -249,6 +249,7 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request, id string, a
 	}
 	if isMainTeamLead(actor.Role) {
 		req.Role = RoleSalesExecutive
+		req.MustResetPassword = nil
 	}
 
 	v := &ValidationError{}
