@@ -9,6 +9,22 @@ import (
 	"unicode/utf8"
 )
 
+func (s *Server) applyLivePresence(users []PublicUser) {
+	if s.hub == nil {
+		return
+	}
+	for i := range users {
+		users[i].IsActiveSession = s.hub.IsOnline(users[i].ID)
+	}
+}
+
+func (s *Server) applyLivePresenceOne(user *PublicUser) {
+	if user == nil || s.hub == nil {
+		return
+	}
+	user.IsActiveSession = s.hub.IsOnline(user.ID)
+}
+
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -123,7 +139,9 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "user no longer exists")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"user": user.Public()})
+	pub := user.Public()
+	s.applyLivePresenceOne(&pub)
+	writeJSON(w, http.StatusOK, map[string]any{"user": pub})
 }
 
 func (s *Server) handleRoles(w http.ResponseWriter, r *http.Request) {

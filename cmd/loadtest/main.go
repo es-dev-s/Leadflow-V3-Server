@@ -1,5 +1,5 @@
 // loadtest hammers LeadFlow like concurrent humans: list/search/paginate leads,
-// hit aggregates, open lead details (writes LeadView), and create→patch→delete
+// hit aggregates, open lead details, and create→patch→delete
 // disposable leads. Ramps concurrency and prints a production capacity report.
 //
 package main
@@ -282,7 +282,7 @@ func (c *client) sessionLoop(ctx context.Context) {
 		case roll < 80:
 			_, _, _, _ = c.do(ctx, "geo_options", http.MethodGet, "/api/leads/geo-options", nil)
 		case roll < 88:
-			// Open a lead from a fresh list page (also writes LeadView).
+			// Open a lead from a fresh list page.
 			page, err := c.listPage(ctx, "", "")
 			if err != nil || len(page.Items) == 0 {
 				continue
@@ -330,7 +330,7 @@ func (c *client) writeCycle(ctx context.Context) {
 	if created.ID == "" {
 		return
 	}
-	// Detail fetch also writes LeadView — realistic "open lead" write path.
+	// Detail fetch — realistic "open lead" read path.
 	_, _, _, _ = c.do(ctx, "lead_detail", http.MethodGet, "/api/leads/"+created.ID, nil)
 	// Full profile patch (API requires the create-shaped body).
 	_, _, _, _ = c.do(ctx, "lead_patch", http.MethodPatch, "/api/leads/"+created.ID, map[string]any{
@@ -532,7 +532,7 @@ func main() {
 	fmt.Println("\n==================== CAPACITY REPORT ====================")
 	fmt.Println("SLO: error rate ≤ 5% AND overall p95 latency ≤ 3s")
 	fmt.Println("Workload mix: browse+paginate ~35%, search ~15%, summary ~12%,")
-	fmt.Println("  pipeline ~10%, geo ~8%, open lead (LeadView write) ~8%,")
+	fmt.Println("  pipeline ~10%, geo ~8%, open lead ~8%,")
 	fmt.Println("  notifications ~6%, create/patch/delete lead ~6%")
 	fmt.Println()
 	maxPass := 0

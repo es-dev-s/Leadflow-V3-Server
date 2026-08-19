@@ -28,11 +28,14 @@ func (s *Server) handleLeadsSummary(w http.ResponseWriter, r *http.Request) {
 	reqCtx, cancel := context.WithTimeout(r.Context(), 12*time.Second)
 	defer cancel()
 
-	summary, err := s.leads.Summary(reqCtx, params, hideActive)
+	summary, err := s.leads.Summary(reqCtx, params)
 	if err != nil {
 		log.Printf("leads summary: %v", err)
 		writeError(w, http.StatusInternalServerError, "failed to load leads summary")
 		return
+	}
+	if !hideActive {
+		summary.ActiveUsers = int64(s.hub.OnlineCount(params.TeamID))
 	}
 	s.writeCachedJSON(w, r, summary, 15*time.Second)
 }
@@ -391,7 +394,7 @@ func (s *Server) handleTransfers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if authUser, ok := userFromContext(r.Context()); ok && (isLeadAnalyst(authUser.Role) || isSalesExecutive(authUser.Role) || isSupport(authUser.Role)) {
+	if authUser, ok := userFromContext(r.Context()); ok && (isLeadAnalyst(authUser.Role) || isSalesExecutive(authUser.Role)) {
 		writeError(w, http.StatusForbidden, "transfer logs are not available for this role")
 		return
 	}

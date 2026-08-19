@@ -93,16 +93,20 @@ func appendLeadSearch(where *[]string, args *[]any, q, field string) {
 		)`, n, n))
 	case "tag":
 		lower := strings.ToLower(q)
+		tagClauses := make([]string, 0, 3)
 		if strings.Contains(lower, "new") {
-			*where = append(*where, `(
-				l."createdAt" > NOW() - INTERVAL '30 days'
-				AND NOT EXISTS (
-					SELECT 1 FROM "LeadView" lv
-					WHERE lv."leadId" = l.id
-				)
-			)`)
-		} else {
+			tagClauses = append(tagClauses, leadIsUnassignedSQL)
+		}
+		if strings.Contains(lower, "appropriate") || strings.Contains(lower, "approved") {
+			tagClauses = append(tagClauses, `l."notAppropriate" = TRUE`)
+		}
+		if strings.Contains(lower, "irrelevant") {
+			tagClauses = append(tagClauses, `l."qualificationStatus" = 'IRRELEVANT'`)
+		}
+		if len(tagClauses) == 0 {
 			*where = append(*where, `FALSE`)
+		} else {
+			*where = append(*where, "("+strings.Join(tagClauses, " OR ")+")")
 		}
 	case "phone":
 		appendPhoneSearch(where, args, q)

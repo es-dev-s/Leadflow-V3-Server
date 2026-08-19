@@ -52,6 +52,7 @@ func (s *Server) listUsers(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "failed to list users")
 			return
 		}
+		s.applyLivePresence(users)
 		writeJSON(w, http.StatusOK, map[string]any{
 			"users":     users,
 			"total":     total,
@@ -83,6 +84,7 @@ func (s *Server) listUsers(w http.ResponseWriter, r *http.Request) {
 		}
 		filtered = append(filtered, u)
 	}
+	s.applyLivePresence(filtered)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"users":     filtered,
 		"total":     len(filtered),

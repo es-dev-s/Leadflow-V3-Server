@@ -32,8 +32,7 @@ func (s *Server) handleLeads(w http.ResponseWriter, r *http.Request) {
 func (s *Server) listLeads(w http.ResponseWriter, r *http.Request) {
 	// Viewer-scoped cache (key includes path+query+userID): repeat searches,
 	// filter pages, and back-navigation return instantly. Any lead mutation
-	// bumps the cache generation, so entries never outlive a data change; the
-	// short TTL only bounds the viewer-specific "new" tag staleness.
+	// bumps the cache generation, so entries never outlive a data change.
 	if s.serveFromCache(w, r) {
 		return
 	}
@@ -48,12 +47,10 @@ func (s *Server) listLeads(w http.ResponseWriter, r *http.Request) {
 	reqCtx, cancel := context.WithTimeout(r.Context(), 12*time.Second)
 	defer cancel()
 
-	viewerID := ""
 	analystID := q.Get("analystId")
 	teamID := q.Get("teamId")
 	salesExecID := q.Get("salesExecId")
 	if authUser, ok := userFromContext(r.Context()); ok {
-		viewerID = authUser.ID
 		if owner := leadDataOwnerID(authUser.Role, authUser.ID); owner != "" {
 			// Lead analysts may only list leads they created.
 			analystID = owner
@@ -75,7 +72,6 @@ func (s *Server) listLeads(w http.ResponseWriter, r *http.Request) {
 		Field:               q.Get("field"),
 		Cursor:              q.Get("cursor"),
 		Limit:               limit,
-		ViewerID:            viewerID,
 		Country:             q.Get("country"),
 		City:                q.Get("city"),
 		TeamID:              teamID,
@@ -440,11 +436,6 @@ func (s *Server) handleLeadByID(w http.ResponseWriter, r *http.Request) {
 			log.Printf("get lead: %v", err)
 			writeError(w, http.StatusInternalServerError, "failed to load lead")
 			return
-		}
-		if authUser, ok := userFromContext(r.Context()); ok {
-			if markErr := s.leads.MarkLeadViewed(r.Context(), authUser.ID, id); markErr != nil {
-				log.Printf("mark lead viewed: %v", markErr)
-			}
 		}
 		writeJSON(w, http.StatusOK, detail)
 	case http.MethodPatch:

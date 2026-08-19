@@ -103,11 +103,7 @@ func main() {
 		},
 		hub:       NewRealtimeHub(),
 		respCache: respCache,
-		telemetry: NewTelemetryEmitter(
-			envOr("TELEMETRY_URL", ""),
-			envOr("TELEMETRY_INGEST_SECRET", jwtSecret),
-		),
-		uploads: uploadStore,
+		uploads:   uploadStore,
 	}
 
 	mux := http.NewServeMux()
@@ -154,7 +150,7 @@ func main() {
 	addr := host + ":" + port
 	httpServer := &http.Server{
 		Addr:              addr,
-		Handler:           telemetryMiddleware(server.telemetry, recoverMiddleware(server.telemetry, mux)),
+		Handler:           recoverMiddleware(mux),
 		ReadHeaderTimeout: 5 * time.Second,
 		// Allow screenshot uploads (up to 5 MB) on slower links.
 		ReadTimeout: 60 * time.Second,
@@ -165,8 +161,6 @@ func main() {
 		IdleTimeout:    120 * time.Second,
 		MaxHeaderBytes: 1 << 20,
 	}
-
-	server.telemetry.EmitOne("server_start", "info", "CRM backend started", "/", "BOOT", 0, "")
 
 	go func() {
 		log.Printf("LeadFlow backend listening on http://%s (PORT=%s from env)", addr, port)
@@ -180,9 +174,6 @@ func main() {
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 	<-stop
 	log.Println("shutting down…")
-	server.telemetry.EmitOne("server_stop", "warn", "CRM backend stopping", "/", "SHUTDOWN", 0, "")
-	// Give emitter a moment to flush the shutdown event.
-	time.Sleep(150 * time.Millisecond)
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer shutdownCancel()
 	if err := httpServer.Shutdown(shutdownCtx); err != nil {
@@ -192,14 +183,11 @@ func main() {
 
 // recoverMiddleware turns a panic in any handler into a 500 instead of taking
 // down the whole process — critical when serving many concurrent users.
-func recoverMiddleware(emitter *TelemetryEmitter, next http.Handler) http.Handler {
+func recoverMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if rec := recover(); rec != nil {
 				log.Printf("panic serving %s %s: %v", r.Method, r.URL.Path, rec)
-				if emitter != nil {
-					emitter.EmitOne("server_panic", "error", "handler panic", r.URL.Path, r.Method, 500, "")
-				}
 				defer func() { _ = recover() }() // header may already be sent (SSE)
 				writeError(w, http.StatusInternalServerError, "internal server error")
 			}

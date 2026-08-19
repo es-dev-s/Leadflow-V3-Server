@@ -14,10 +14,6 @@ JWT_SECRET=change-me-to-a-long-random-secret
 PORT=9080
 HOST=0.0.0.0
 
-TELEMETRY_PORT=9081
-CRM_URL=http://127.0.0.1:9080
-TELEMETRY_URL=http://127.0.0.1:9081
-
 # Production hardening
 APP_ENV=production
 COOKIE_SECURE=true
@@ -27,7 +23,7 @@ COOKIE_SAMESITE=Lax
 CORS_ORIGINS=https://app.example.com
 ```
 
-Schema changes ship as versioned SQL under `migrations/` (and `cmd/telemetry/migrations/`). Startup applies them once via `schema_migrations` — it no longer runs ad-hoc DDL.
+Schema changes ship as versioned SQL under `migrations/`. Startup applies them once via `schema_migrations` — it no longer runs ad-hoc DDL.
 
 ```bash
 cd backend
@@ -45,11 +41,9 @@ UI (`lead_flow_ui/.env.local`) should point `BACKEND_URL` at the same CRM port, 
 | `LEAD_ANALYST` | Lead Analyst |
 | `MAIN_TEAM_LEAD` | Main Team Lead |
 | `SALES_EXECUTIVE` | Sales Executive |
-| `SUPPORT` | Support |
 
-- All authenticated roles share the same UI/API surface for now (unscoped).
-- Only `SUPERADMIN` can create users and update role/password.
-- Scope-based permissions can be layered later without changing login.
+- Superadmin, Analyst Team Lead, and Main Team Lead can create users in their role scope.
+- Scope-based permissions apply to leads (creator / team / assignee).
 
 ## Auth
 
@@ -59,8 +53,8 @@ UI (`lead_flow_ui/.env.local`) should point `BACKEND_URL` at the same CRM port, 
 | GET | `/api/auth/me` | Auth | Current user (DB-backed) |
 | GET | `/api/roles` | Auth | Available RBAC roles |
 | GET | `/api/users` | Auth | List users |
-| POST | `/api/users` | Superadmin | Create user |
-| PATCH | `/api/users/{id}` | Superadmin | Update role / password |
+| POST | `/api/users` | Superadmin / ATL / MTL | Create user (scoped) |
+| PATCH | `/api/users/{id}` | Superadmin / ATL / MTL | Update role / password (scoped) |
 | * | `/api/leads*` | Auth | Leads + reporting |
 | GET | `/api/transfers` | Auth | Transfer logs |
 | GET | `/health` | Public | Service + DB health |

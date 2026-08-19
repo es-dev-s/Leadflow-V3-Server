@@ -19,7 +19,6 @@ type Server struct {
 	poolPing      func(context.Context) error
 	hub           *RealtimeHub
 	respCache     ResponseCacher
-	telemetry     *TelemetryEmitter
 	uploads       *UploadStore
 }
 
@@ -105,7 +104,7 @@ func (s *Server) geoFilterFromRequest(r *http.Request) GeoFilter {
 	return filter
 }
 
-// requireLeadDataAccess blocks Support (and unknown roles) from any lead surface.
+// requireLeadDataAccess blocks unknown roles from any lead surface.
 // Returns false after writing an error response.
 func (s *Server) requireLeadDataAccess(w http.ResponseWriter, r *http.Request) bool {
 	authUser, ok := userFromContext(r.Context())

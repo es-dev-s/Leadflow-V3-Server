@@ -543,8 +543,8 @@ func (s *UserStore) Update(ctx context.Context, id string, in UpdateUserInput) (
 }
 
 // Delete removes a user after preserving leads and neutralizing team ownership.
-// Lead.createdById is NOT NULL ON DELETE CASCADE — leads are reassigned to actorID
-// so CRM data is never wiped by an account deletion.
+// Leads are never deleted here — they stay in the CRM until someone
+// intentionally deletes the lead. User FKs on Lead are ON DELETE SET NULL.
 func (s *UserStore) Delete(ctx context.Context, id, actorID string) error {
 	id = strings.TrimSpace(id)
 	actorID = strings.TrimSpace(actorID)
@@ -575,20 +575,45 @@ func (s *UserStore) Delete(ctx context.Context, id, actorID string) error {
 	}
 	defer tx.Rollback(ctx)
 
-	// Preserve lead history: reassign creator before user row is removed.
-	if _, err := tx.Exec(ctx, `
-		UPDATE "Lead"
-		SET "createdById" = $2, "updatedAt" = NOW()
-		WHERE "createdById" = $1`, id, actorID); err != nil {
-		return err
+	// Keep a living creator so list/KPI analyst grouping still has a user.
+	// The FK is SET NULL, so even if this update is skipped the lead survives.
+	if actorID != "" {
+		if _, err := tx.Exec(ctx, `
+			UPDATE "Lead"
+			SET "createdById" = $2, "updatedAt" = NOW()
+			WHERE "createdById" = $1`, id, actorID); err != nil {
+			return err
+		}
 	}
 
-	// Detach SE assignments so delete is not blocked by lead FKs.
-	// Leads stay on the current team / main team lead.
+	// Assigned leads return to the unassigned pool. Qualification, Irrelevant,
+	// and Not appropriate flags stay on the lead.
 	if _, err := tx.Exec(ctx, `
 		UPDATE "Lead"
-		SET "assignedSalesExecId" = NULL, "updatedAt" = NOW()
+		SET
+			"assignedSalesExecId" = NULL,
+			"assignedMainTeamLeadId" = NULL,
+			"teamId" = NULL,
+			"execAssignedAt" = NULL,
+			"execDeadlineAt" = NULL,
+			"salesStage" = CASE
+				WHEN "salesStage" IN ('WITH_EXECUTIVE', 'WITH_TEAM_LEAD') THEN 'PRE_SALES'
+				ELSE "salesStage"
+			END,
+			"updatedAt" = NOW()
 		WHERE "assignedSalesExecId" = $1`, id); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE "Lead"
+		SET "assignedMainTeamLeadId" = NULL, "updatedAt" = NOW()
+		WHERE "assignedMainTeamLeadId" = $1`, id); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE "Lead"
+		SET "notAppropriateById" = NULL, "updatedAt" = NOW()
+		WHERE "notAppropriateById" = $1`, id); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx, `

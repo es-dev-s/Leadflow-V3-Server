@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -13,29 +14,44 @@ import (
 
 // Realtime event types broadcast to connected clients over SSE.
 const (
-	EvtLeadCreated  = "lead.created"
-	EvtLeadUpdated  = "lead.updated"
-	EvtLeadDeleted  = "lead.deleted"
-	EvtUserCreated  = "user.created"
-	EvtUserUpdated  = "user.updated"
-	EvtUserDeleted  = "user.deleted"
-	EvtNotification = "notification"
+	EvtLeadCreated     = "lead.created"
+	EvtLeadUpdated     = "lead.updated"
+	EvtLeadDeleted     = "lead.deleted"
+	EvtUserCreated     = "user.created"
+	EvtUserUpdated     = "user.updated"
+	EvtUserDeleted     = "user.deleted"
+	EvtNotification    = "notification"
+	EvtPresenceOnline  = "presence.online"
+	EvtPresenceOffline = "presence.offline"
+	EvtPresenceSync    = "presence.sync"
 )
+
+// PresenceInfo is one live dashboard session (unique user).
+type PresenceInfo struct {
+	UserID string `json:"userId"`
+	TeamID string `json:"teamId,omitempty"`
+	Role   string `json:"role,omitempty"`
+}
 
 // RealtimeEvent is a small, cheap payload. Clients coalesce these and refresh
 // the affected surface (list / notifications) rather than trusting the payload
 // as the source of truth — keeps us correct under 200+ concurrent sessions.
 type RealtimeEvent struct {
-	Type    string `json:"type"`
-	LeadID  string `json:"leadId,omitempty"`
-	UserID  string `json:"userId,omitempty"`
-	ActorID string `json:"actorId,omitempty"`
-	At      int64  `json:"at"`
+	Type    string         `json:"type"`
+	LeadID  string         `json:"leadId,omitempty"`
+	UserID  string         `json:"userId,omitempty"`
+	TeamID  string         `json:"teamId,omitempty"`
+	Role    string         `json:"role,omitempty"`
+	Users   []PresenceInfo `json:"users,omitempty"`
+	ActorID string         `json:"actorId,omitempty"`
+	At      int64          `json:"at"`
 }
 
 type sseClient struct {
 	id     string
 	userID string
+	role   string
+	teamID string
 	ch     chan []byte
 }
 
@@ -50,29 +66,113 @@ func NewRealtimeHub() *RealtimeHub {
 	return &RealtimeHub{clients: make(map[string]*sseClient)}
 }
 
-func (h *RealtimeHub) add(c *sseClient) int {
+func (h *RealtimeHub) add(c *sseClient) (total int, firstForUser bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	firstForUser = true
+	for _, existing := range h.clients {
+		if existing.userID == c.userID {
+			firstForUser = false
+			break
+		}
+	}
 	h.clients[c.id] = c
-	return len(h.clients)
+	return len(h.clients), firstForUser
 }
 
-func (h *RealtimeHub) remove(id string) {
+func (h *RealtimeHub) remove(id string) (info PresenceInfo, lastForUser bool) {
 	h.mu.Lock()
 	c, ok := h.clients[id]
-	if ok {
-		delete(h.clients, id)
+	if !ok {
+		h.mu.Unlock()
+		return PresenceInfo{}, false
+	}
+	delete(h.clients, id)
+	info = PresenceInfo{UserID: c.userID, TeamID: c.teamID, Role: c.role}
+	lastForUser = true
+	for _, existing := range h.clients {
+		if existing.userID == c.userID {
+			lastForUser = false
+			break
+		}
 	}
 	h.mu.Unlock()
-	if ok {
-		close(c.ch)
-	}
+	close(c.ch)
+	return info, lastForUser
 }
 
 func (h *RealtimeHub) clientCount() int {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	return len(h.clients)
+}
+
+func (h *RealtimeHub) IsOnline(userID string) bool {
+	userID = strings.TrimSpace(userID)
+	if userID == "" || h == nil {
+		return false
+	}
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	for _, c := range h.clients {
+		if c.userID == userID {
+			return true
+		}
+	}
+	return false
+}
+
+func (h *RealtimeHub) Snapshot() []PresenceInfo {
+	if h == nil {
+		return nil
+	}
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	seen := make(map[string]PresenceInfo, len(h.clients))
+	for _, c := range h.clients {
+		if _, ok := seen[c.userID]; ok {
+			continue
+		}
+		seen[c.userID] = PresenceInfo{UserID: c.userID, TeamID: c.teamID, Role: c.role}
+	}
+	out := make([]PresenceInfo, 0, len(seen))
+	for _, p := range seen {
+		out = append(out, p)
+	}
+	return out
+}
+
+// OnlineCount is unique live users. When teamID is set (and not "none"), only
+// that team's connected users are counted — same scope as the dashboard card.
+func (h *RealtimeHub) OnlineCount(teamID string) int {
+	teamID = strings.TrimSpace(teamID)
+	if teamID == "none" {
+		teamID = ""
+	}
+	n := 0
+	for _, p := range h.Snapshot() {
+		if teamID == "" || p.TeamID == teamID {
+			n++
+		}
+	}
+	return n
+}
+
+func (h *RealtimeHub) sendTo(c *sseClient, evt RealtimeEvent) {
+	if h == nil || c == nil {
+		return
+	}
+	if evt.At == 0 {
+		evt.At = time.Now().UnixMilli()
+	}
+	payload, err := json.Marshal(evt)
+	if err != nil {
+		return
+	}
+	select {
+	case c.ch <- payload:
+	default:
+	}
 }
 
 // Broadcast delivers to every connected client.
@@ -174,18 +274,48 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Accel-Buffering", "no")
 	w.WriteHeader(http.StatusOK)
 
+	teamID := ""
+	if dbUser.TeamID != nil {
+		teamID = strings.TrimSpace(*dbUser.TeamID)
+	}
+
 	client := &sseClient{
 		id:     uuid.NewString(),
 		userID: dbUser.ID,
+		role:   dbUser.Role,
+		teamID: teamID,
 		ch:     make(chan []byte, 64),
 	}
-	total := s.hub.add(client)
-	defer s.hub.remove(client.id)
+	total, first := s.hub.add(client)
+	defer func() {
+		info, last := s.hub.remove(client.id)
+		if last && info.UserID != "" {
+			s.hub.Broadcast(RealtimeEvent{
+				Type:   EvtPresenceOffline,
+				UserID: info.UserID,
+				TeamID: info.TeamID,
+				Role:   info.Role,
+			})
+		}
+	}()
 	log.Printf("sse: client connected user=%s total=%d", dbUser.ID, total)
 
 	// Advise the browser to reconnect quickly and confirm the stream is live.
 	fmt.Fprintf(w, "retry: 3000\nevent: ready\ndata: {\"ok\":true}\n\n")
 	flusher.Flush()
+
+	if first {
+		s.hub.Broadcast(RealtimeEvent{
+			Type:   EvtPresenceOnline,
+			UserID: dbUser.ID,
+			TeamID: teamID,
+			Role:   dbUser.Role,
+		})
+	}
+	s.hub.sendTo(client, RealtimeEvent{
+		Type:  EvtPresenceSync,
+		Users: s.hub.Snapshot(),
+	})
 
 	heartbeat := time.NewTicker(20 * time.Second)
 	defer heartbeat.Stop()

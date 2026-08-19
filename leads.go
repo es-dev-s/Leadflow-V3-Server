@@ -18,6 +18,11 @@ import (
 const (
 	defaultLeadLimit = 40
 	maxLeadLimit     = 100
+
+	// leadIsUnassignedSQL is true when the lead has not been assigned to a
+	// team, team lead, or sales executive. The "New" list tag uses this —
+	// viewing a lead must not clear it.
+	leadIsUnassignedSQL = `(l."teamId" IS NULL AND l."assignedMainTeamLeadId" IS NULL AND l."assignedSalesExecId" IS NULL)`
 )
 
 // LeadListItem is shaped for the leads table UI (display-ready strings).
@@ -75,7 +80,6 @@ type LeadListParams struct {
 	Field    string // optional column scope for search
 	Cursor   string
 	Limit    int
-	ViewerID string
 
 	// Dashboard deep-link facets (exact match unless noted).
 	Country     string
@@ -652,7 +656,7 @@ func appendQualificationReasonFacet(where *[]string, args *[]any, reason string)
 }
 
 // buildLeadListWhere builds filter/search/facet clauses with placeholders starting after reserved.
-// reserved is the count of args already allocated (e.g. 1 when $1 is viewer id).
+// reserved is the count of args already allocated before these clauses.
 func buildLeadListWhere(params LeadListParams, reserved int) ([]string, []any) {
 	args := make([]any, 0, 20+reserved)
 	for i := 0; i < reserved; i++ {
@@ -687,7 +691,6 @@ func (s *LeadStore) List(ctx context.Context, params LeadListParams) (LeadListRe
 	limit := clampLeadLimit(params.Limit)
 	q := strings.TrimSpace(params.Query)
 	field := canonicalSearchField(params.Field)
-	viewerID := strings.TrimSpace(params.ViewerID)
 	params.Filter = filter
 	params.Sort = sort
 	params.Query = q
@@ -719,19 +722,7 @@ func (s *LeadStore) List(ctx context.Context, params LeadListParams) (LeadListRe
 		countDone <- s.pool.QueryRow(ctx, countSQL, countArgs...).Scan(&total)
 	}()
 
-	viewerJoin := ""
-	viewerSelect := "FALSE"
 	args := append([]any{}, filterArgs...)
-	if viewerID != "" {
-		listWhere, listArgs := buildLeadListWhere(params, 1)
-		args = append([]any{viewerID}, listArgs...)
-		whereSQL = ""
-		if len(listWhere) > 0 {
-			whereSQL = "WHERE " + strings.Join(listWhere, " AND ")
-		}
-		viewerJoin = `LEFT JOIN "LeadView" lv ON lv."leadId" = l.id AND lv."userId" = $1`
-		viewerSelect = `(lv."viewedAt" IS NULL AND l."createdAt" > NOW() - INTERVAL '30 days')`
-	}
 
 	cursorSQL := ""
 	orderSQL := ""
@@ -881,7 +872,6 @@ func (s *LeadStore) List(ctx context.Context, params LeadListParams) (LeadListRe
 		LEFT JOIN "User" cb ON cb.id = l."createdById"
 		LEFT JOIN "Team" t ON t.id = l."teamId"
 		LEFT JOIN "User" se ON se.id = l."assignedSalesExecId"
-		%s
 		LEFT JOIN LATERAL (
 			SELECT h.action, h.detail
 			FROM "LeadHandoffLog" h
@@ -892,7 +882,7 @@ func (s *LeadStore) List(ctx context.Context, params LeadListParams) (LeadListRe
 		) hh ON TRUE
 		%s
 		%s
-		LIMIT $%d`, viewerSelect, viewerJoin, whereSQL, orderSQL, limitPos)
+		LIMIT $%d`, leadIsUnassignedSQL, whereSQL, orderSQL, limitPos)
 
 	rows, err := s.pool.Query(ctx, listSQL, args...)
 	if err != nil {
@@ -1196,28 +1186,8 @@ func leadScopeWhere(params LeadListParams, applyPreset bool) (whereSQL string, a
 	return "WHERE " + strings.Join(where, " AND "), args
 }
 
-func (s *LeadStore) Summary(ctx context.Context, params LeadListParams, hideActiveUsers bool) (LeadSummary, error) {
+func (s *LeadStore) Summary(ctx context.Context, params LeadListParams) (LeadSummary, error) {
 	var out LeadSummary
-
-	// Active users: workspace-wide, or team-scoped when TeamID facet is forced.
-	if !hideActiveUsers {
-		teamID := strings.TrimSpace(params.TeamID)
-		if teamID != "" && teamID != "none" {
-			if err := s.pool.QueryRow(ctx, `
-				SELECT COUNT(*)::bigint
-				FROM "User"
-				WHERE "teamId" = $1
-				  AND "activeSessionHash" IS NOT NULL
-				  AND "activeSessionHash" <> ''`, teamID).Scan(&out.ActiveUsers); err != nil {
-				return out, err
-			}
-		} else if err := s.pool.QueryRow(ctx, `
-			SELECT COUNT(*)::bigint
-			FROM "User"
-			WHERE "activeSessionHash" IS NOT NULL AND "activeSessionHash" <> ''`).Scan(&out.ActiveUsers); err != nil {
-			return out, err
-		}
-	}
 
 	// Total passed (legacy SE handoff) — same lead facets as other KPIs.
 	passArgs := []any{"DIRECT_ASSIGNED_TO_EXECUTIVE_BY_ATL", "ASSIGNED_TO_EXECUTIVE"}

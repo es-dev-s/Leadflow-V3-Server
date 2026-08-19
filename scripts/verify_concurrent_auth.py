@@ -32,7 +32,6 @@ ACCOUNTS = [
     Account("rbac.mtl@demo.local", "MAIN_TEAM_LEAD", "RBAC MTL"),
     Account("rbac.atl@demo.local", "ANALYST_TEAM_LEAD", "RBAC ATL"),
     Account("rbac.la@demo.local", "LEAD_ANALYST", "RBAC LA"),
-    Account("rbac.support@demo.local", "SUPPORT", "RBAC Support"),
 ]
 
 
@@ -207,7 +206,7 @@ def verify_rbac_create_user() -> None:
             "name": "RBAC Temp",
             "email": email,
             "password": PASSWORD,
-            "role": "SUPPORT",
+            "role": "LEAD_ANALYST",
         },
         token=super_token,
     )

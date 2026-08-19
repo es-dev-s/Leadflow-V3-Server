@@ -56,7 +56,7 @@ func TestTokenServiceConcurrentIssueParseNoMix(t *testing.T) {
 		{ID: "id-a", Email: "a@demo.local", Name: "A", Role: RoleSalesExecutive},
 		{ID: "id-b", Email: "b@demo.local", Name: "B", Role: RoleMainTeamLead},
 		{ID: "id-c", Email: "c@demo.local", Name: "C", Role: RoleSuperadmin},
-		{ID: "id-d", Email: "d@demo.local", Name: "D", Role: RoleSupport},
+		{ID: "id-d", Email: "d@demo.local", Name: "D", Role: RoleAnalystTeamLead},
 		{ID: "id-e", Email: "e@demo.local", Name: "E", Role: RoleLeadAnalyst},
 	}
 
@@ -144,7 +144,6 @@ func TestCanCreateUsersRBAC(t *testing.T) {
 	for _, role := range []string{
 		RoleLeadAnalyst,
 		RoleSalesExecutive,
-		RoleSupport,
 	} {
 		if canCreateUsers(role) {
 			t.Fatalf("%s must not create users", role)
@@ -255,6 +254,9 @@ func TestCanCreateUsersRBAC(t *testing.T) {
 	}
 	if leadTeamScopeID(RoleSuperadmin, &team) != "" {
 		t.Fatal("superadmin must not be team-scoped")
+	}
+	if isValidRole("SUPPORT") {
+		t.Fatal("SUPPORT is not a CRM role")
 	}
 	if !canViewUsers(RoleMainTeamLead) {
 		t.Fatal("main team lead should view users")

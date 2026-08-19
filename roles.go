@@ -9,7 +9,6 @@ const (
 	RoleLeadAnalyst     = "LEAD_ANALYST"
 	RoleMainTeamLead    = "MAIN_TEAM_LEAD"
 	RoleSalesExecutive  = "SALES_EXECUTIVE"
-	RoleSupport         = "SUPPORT"
 )
 
 var allRoles = []string{
@@ -18,7 +17,6 @@ var allRoles = []string{
 	RoleLeadAnalyst,
 	RoleMainTeamLead,
 	RoleSalesExecutive,
-	RoleSupport,
 }
 
 var roleLabels = map[string]string{
@@ -27,7 +25,6 @@ var roleLabels = map[string]string{
 	RoleLeadAnalyst:     "Lead Analyst",
 	RoleMainTeamLead:    "Main Team Lead",
 	RoleSalesExecutive:  "Sales Executive",
-	RoleSupport:         "Support",
 }
 
 // Roles an Analyst Team Lead may create / edit / delete.
@@ -140,14 +137,9 @@ func canAssignToTeamLeads(role string) bool {
 	return canMutateLeads(role) && !isSalesExecutive(role) && !isMainTeamLead(role)
 }
 
-func isSupport(role string) bool {
-	return role == RoleSupport
-}
-
 // canViewLeadData — who may list/read leads, pipeline, transfers, and lead analytics.
-// Support has no lead-data surface (empty dashboard only).
 func canViewLeadData(role string) bool {
-	return !isSupport(role) && isValidRole(role)
+	return isValidRole(role)
 }
 
 func isLeadAnalyst(role string) bool {

@@ -15,6 +15,34 @@ func TestGlobalSearchSQLHasNoFmtExtra(t *testing.T) {
 	}
 }
 
+func TestTagSearchNewMeansUnassigned(t *testing.T) {
+	where, _ := buildLeadListWhere(LeadListParams{Filter: "all", Query: "new", Field: "tag"}, 0)
+	sql := strings.Join(where, " AND ")
+	if !strings.Contains(sql, `l."teamId" IS NULL`) {
+		t.Fatalf("tag=new should match unassigned team: %s", sql)
+	}
+	if !strings.Contains(sql, `l."assignedMainTeamLeadId" IS NULL`) {
+		t.Fatalf("tag=new should match unassigned team lead: %s", sql)
+	}
+	if strings.Contains(sql, "LeadView") {
+		t.Fatalf("tag=new must not use LeadView: %s", sql)
+	}
+}
+
+func TestTagSearchNotAppropriateAndIrrelevant(t *testing.T) {
+	where, _ := buildLeadListWhere(LeadListParams{Filter: "all", Query: "not approved", Field: "tag"}, 0)
+	sql := strings.Join(where, " AND ")
+	if !strings.Contains(sql, `l."notAppropriate" = TRUE`) {
+		t.Fatalf("tag=not approved should match not-appropriate: %s", sql)
+	}
+
+	where, _ = buildLeadListWhere(LeadListParams{Filter: "all", Query: "Irrelevant", Field: "tag"}, 0)
+	sql = strings.Join(where, " AND ")
+	if !strings.Contains(sql, `l."qualificationStatus" = 'IRRELEVANT'`) {
+		t.Fatalf("tag=irrelevant should match IRRELEVANT status: %s", sql)
+	}
+}
+
 func TestLeadFacetsInWhere(t *testing.T) {
 	where, args := buildLeadListWhere(LeadListParams{
 		Filter:  "all",
