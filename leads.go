@@ -533,8 +533,21 @@ func appendBlankOrEqual(where *[]string, args *[]any, expr, value string) {
 		*where = append(*where, fmt.Sprintf(`(%s IS NULL OR BTRIM(%s) = '')`, expr, expr))
 		return
 	}
+	appendTrimEqual(where, args, expr, value)
+}
+
+// appendTrimEqual matches text facets ignoring case and surrounding space so
+// sidebar labels (Nepal / nepal) still hit stored rows.
+func appendTrimEqual(where *[]string, args *[]any, expr, value string) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return
+	}
 	*args = append(*args, value)
-	*where = append(*where, fmt.Sprintf(`BTRIM(%s) = $%d`, expr, len(*args)))
+	*where = append(*where, fmt.Sprintf(
+		`LOWER(BTRIM(%s)) = LOWER(BTRIM($%d::text))`,
+		expr, len(*args),
+	))
 }
 
 func appendNullableID(where *[]string, args *[]any, column, value string) {
@@ -556,16 +569,14 @@ func appendLeadFacets(where *[]string, args *[]any, params LeadListParams) {
 		if isBlankGeoLabel(geo.Country) {
 			*where = append(*where, blankGeoSQL("l.", "country"))
 		} else {
-			*args = append(*args, geo.Country)
-			*where = append(*where, fmt.Sprintf(`BTRIM(l.country) = $%d`, len(*args)))
+			appendTrimEqual(where, args, `l.country`, geo.Country)
 		}
 	}
 	if geo.City != "" {
 		if isBlankGeoLabel(geo.City) {
 			*where = append(*where, blankGeoSQL("l.", "city"))
 		} else {
-			*args = append(*args, geo.City)
-			*where = append(*where, fmt.Sprintf(`BTRIM(l.city) = $%d`, len(*args)))
+			appendTrimEqual(where, args, `l.city`, geo.City)
 		}
 	}
 
@@ -602,17 +613,26 @@ func appendLeadFacets(where *[]string, args *[]any, params LeadListParams) {
 	if from != "" && to != "" && from > to {
 		from, to = to, from
 	}
+	tz := businessLocation().String()
 	if from != "" {
 		if _, err := time.Parse("2006-01-02", from); err == nil {
-			*args = append(*args, from)
-			*where = append(*where, fmt.Sprintf(`l."createdAt" >= $%d::date`, len(*args)))
+			*args = append(*args, tz, from)
+			n := len(*args)
+			// createdAt is stored as UTC wall-clock in timestamp-without-tz.
+			*where = append(*where, fmt.Sprintf(
+				`((l."createdAt" AT TIME ZONE 'UTC') AT TIME ZONE $%d)::date >= $%d::date`,
+				n-1, n,
+			))
 		}
 	}
 	if to != "" {
 		if _, err := time.Parse("2006-01-02", to); err == nil {
-			*args = append(*args, to)
-			// Inclusive end-of-day: createdAt < (to + 1 day)
-			*where = append(*where, fmt.Sprintf(`l."createdAt" < ($%d::date + INTERVAL '1 day')`, len(*args)))
+			*args = append(*args, tz, to)
+			n := len(*args)
+			*where = append(*where, fmt.Sprintf(
+				`((l."createdAt" AT TIME ZONE 'UTC') AT TIME ZONE $%d)::date <= $%d::date`,
+				n-1, n,
+			))
 		}
 	}
 

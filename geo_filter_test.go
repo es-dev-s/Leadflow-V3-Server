@@ -50,4 +50,7 @@ func TestGeoFilterExactCity(t *testing.T) {
 	if len(args) != 2 || args[0] != "Nepal" || args[1] != "Kathmandu" {
 		t.Fatalf("args=%#v clause=%s", args, clause)
 	}
+	if !strings.Contains(clause, `LOWER(BTRIM(l."country"))`) {
+		t.Fatalf("country match should be case-insensitive: %s", clause)
+	}
 }

@@ -43,6 +43,21 @@ func TestTagSearchNotAppropriateAndIrrelevant(t *testing.T) {
 	}
 }
 
+func TestAddedDateUsesBusinessCalendar(t *testing.T) {
+	where, args := buildLeadListWhere(LeadListParams{
+		Filter:    "all",
+		AddedFrom: "2026-08-19",
+		AddedTo:   "2026-08-19",
+	}, 0)
+	sql := strings.Join(where, " AND ")
+	if !strings.Contains(sql, "AT TIME ZONE") {
+		t.Fatalf("date filter must use business timezone: %s", sql)
+	}
+	if len(args) < 2 {
+		t.Fatalf("expected tz + date args, got %#v", args)
+	}
+}
+
 func TestLeadFacetsInWhere(t *testing.T) {
 	where, args := buildLeadListWhere(LeadListParams{
 		Filter:  "all",
@@ -51,7 +66,7 @@ func TestLeadFacetsInWhere(t *testing.T) {
 		Status:  "QUALIFIED_CALL",
 	}, 0)
 	sql := strings.Join(where, " AND ")
-	if !strings.Contains(sql, `BTRIM(l.country)`) {
+	if !strings.Contains(sql, `LOWER(BTRIM(l.country))`) {
 		t.Fatalf("missing country clause: %s", sql)
 	}
 	if !strings.Contains(sql, `l."teamId" IS NULL`) {

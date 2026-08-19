@@ -67,7 +67,10 @@ func (f GeoFilter) leadClause(alias string, argStart int) (clause string, args [
 		} else {
 			n++
 			args = append(args, f.Country)
-			parts = append(parts, fmt.Sprintf(`BTRIM(%s"country") = $%d`, alias, n))
+			parts = append(parts, fmt.Sprintf(
+				`LOWER(BTRIM(%s"country")) = LOWER(BTRIM($%d::text))`,
+				alias, n,
+			))
 		}
 	}
 
@@ -77,7 +80,10 @@ func (f GeoFilter) leadClause(alias string, argStart int) (clause string, args [
 		} else {
 			n++
 			args = append(args, f.City)
-			parts = append(parts, fmt.Sprintf(`BTRIM(%s"city") = $%d`, alias, n))
+			parts = append(parts, fmt.Sprintf(
+				`LOWER(BTRIM(%s"city")) = LOWER(BTRIM($%d::text))`,
+				alias, n,
+			))
 		}
 	}
 
