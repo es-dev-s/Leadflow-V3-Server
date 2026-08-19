@@ -1491,15 +1491,28 @@ func (s *LeadStore) ListCountries(ctx context.Context, filter GeoFilter) ([]Name
 
 func (s *LeadStore) ListCities(ctx context.Context, filter GeoFilter) ([]NamedCount, error) {
 	where, args := filter.whereSQL("")
+	// Drop blank/sentinel cities and values that are really country names stored in city.
+	exclusions := `
+		city IS NOT NULL
+		AND BTRIM(city) <> ''
+		AND LOWER(BTRIM(city)) NOT IN ('unknown', 'none', 'unassigned', 'blank')
+		AND LOWER(BTRIM(city)) <> LOWER(COALESCE(BTRIM(country), ''))
+		AND LOWER(BTRIM(city)) NOT IN (
+			SELECT LOWER(cn.country_name)
+			FROM (
+				SELECT DISTINCT ` + normalizedCountrySQL("country") + ` AS country_name
+				FROM "Lead"
+			) AS cn
+			WHERE LOWER(cn.country_name) NOT IN ('unknown', 'none', 'unassigned', 'blank')
+		)`
+	whereClause := "WHERE " + exclusions
+	if where != "" {
+		whereClause = where + " AND " + exclusions
+	}
 	return namedCountsArgs(ctx, s.pool, `
-		SELECT
-			CASE
-				WHEN city IS NULL OR BTRIM(city) = '' OR LOWER(BTRIM(city)) = 'unknown' THEN 'Unknown'
-				ELSE BTRIM(city)
-			END AS city_name,
-			COUNT(*)::int
+		SELECT BTRIM(city) AS city_name, COUNT(*)::int
 		FROM "Lead"
-		`+where+`
+		`+whereClause+`
 		GROUP BY 1
 		ORDER BY 2 DESC, 1 ASC
 		LIMIT 500`, args...)

@@ -67,7 +67,11 @@ func (f GeoFilter) leadClause(alias string, argStart int) (clause string, args [
 		} else {
 			n++
 			args = append(args, f.Country)
-			parts = append(parts, fmt.Sprintf(`BTRIM(%s"country") = $%d`, alias, n))
+			countryCol := `"country"`
+			if alias != "" {
+				countryCol = alias + `"country"`
+			}
+			parts = append(parts, fmt.Sprintf(`(%s) = $%d`, normalizedCountrySQL(countryCol), n))
 		}
 	}
 

@@ -50,4 +50,7 @@ func TestGeoFilterExactCity(t *testing.T) {
 	if len(args) != 2 || args[0] != "Nepal" || args[1] != "Kathmandu" {
 		t.Fatalf("args=%#v clause=%s", args, clause)
 	}
+	if !strings.Contains(clause, "country") || !strings.Contains(clause, "city") {
+		t.Fatalf("expected country and city clauses: %s", clause)
+	}
 }

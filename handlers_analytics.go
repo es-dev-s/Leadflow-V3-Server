@@ -296,7 +296,16 @@ func (s *Server) handleLeadsGeoOptions(w http.ResponseWriter, r *http.Request) {
 	kind := strings.TrimSpace(strings.ToLower(q.Get("type")))
 	filter := s.geoFilterFromRequest(r)
 
-	if kind == "cities" || filter.Country != "" {
+	switch kind {
+	case "cities":
+		if filter.Country == "" {
+			s.writeCachedJSON(w, r, map[string]any{
+				"type":    "cities",
+				"country": "",
+				"items":   []NamedCount{},
+			}, 60*time.Second)
+			return
+		}
 		cities, err := s.leads.ListCities(reqCtx, filter)
 		if err != nil {
 			log.Printf("list cities: %v", err)
@@ -308,19 +317,18 @@ func (s *Server) handleLeadsGeoOptions(w http.ResponseWriter, r *http.Request) {
 			"country": filter.Country,
 			"items":   cities,
 		}, 60*time.Second)
-		return
+	default:
+		countries, err := s.leads.ListCountries(reqCtx, filter)
+		if err != nil {
+			log.Printf("list countries: %v", err)
+			writeError(w, http.StatusInternalServerError, "failed to load countries")
+			return
+		}
+		s.writeCachedJSON(w, r, map[string]any{
+			"type":  "countries",
+			"items": countries,
+		}, 60*time.Second)
 	}
-
-	countries, err := s.leads.ListCountries(reqCtx, filter)
-	if err != nil {
-		log.Printf("list countries: %v", err)
-		writeError(w, http.StatusInternalServerError, "failed to load countries")
-		return
-	}
-	s.writeCachedJSON(w, r, map[string]any{
-		"type":  "countries",
-		"items": countries,
-	}, 60*time.Second)
 }
 
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
