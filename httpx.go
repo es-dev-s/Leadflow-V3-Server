@@ -51,6 +51,7 @@ func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 		if !dbUser.IsActive {
+			s.authCookie.clear(w)
 			writeError(w, http.StatusForbidden, "account is inactive")
 			return
 		}
