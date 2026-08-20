@@ -196,6 +196,7 @@ type UpdateUserRequest struct {
 	Password          *string `json:"password"`
 	MustResetPassword *bool   `json:"mustResetPassword"`
 	TeamName          *string `json:"teamName"`
+	TeamID            *string `json:"teamId"`
 }
 
 type AuthResponse struct {

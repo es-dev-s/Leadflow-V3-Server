@@ -262,6 +262,9 @@ func (s *UserStore) Create(ctx context.Context, in CreateUserInput) (*UserRecord
 		teamID = nil
 	default:
 		teamName = ""
+		if in.Role != RoleSalesExecutive {
+			teamID = nil
+		}
 	}
 
 	id := uuid.NewString()
@@ -430,6 +433,7 @@ type UpdateUserInput struct {
 	Password          *string
 	MustResetPassword *bool
 	TeamName          *string
+	TeamID            *string
 }
 
 // SetActive soft-disables or re-enables an account. Data is preserved; inactive
@@ -517,6 +521,12 @@ func (s *UserStore) Update(ctx context.Context, id string, in UpdateUserInput) (
 		return nil, err
 	}
 
+	teamID := existing.TeamID
+	if in.TeamID != nil && strings.TrimSpace(*in.TeamID) != "" && in.Role == RoleSalesExecutive {
+		id := strings.TrimSpace(*in.TeamID)
+		teamID = &id
+	}
+
 	if in.Password != nil && strings.TrimSpace(*in.Password) != "" {
 		hash, err := hashPassword(*in.Password)
 		if err != nil {
@@ -530,11 +540,12 @@ func (s *UserStore) Update(ctx context.Context, id string, in UpdateUserInput) (
 			    "passwordHash" = $5,
 			    "mustResetPassword" = $6,
 			    "analystTeamName" = $7,
+			    "teamId" = $8,
 			    "activeSessionHash" = NULL,
 			    "activeSessionSetAt" = NULL,
 			    "updatedAt" = NOW()
 			WHERE id = $1`,
-			id, in.Name, in.Email, in.Role, hash, mustReset, analystTeamName,
+			id, in.Name, in.Email, in.Role, hash, mustReset, analystTeamName, teamID,
 		)
 		if err != nil {
 			var pgErr *pgconn.PgError
@@ -551,9 +562,10 @@ func (s *UserStore) Update(ctx context.Context, id string, in UpdateUserInput) (
 			    role = $4,
 			    "mustResetPassword" = $5,
 			    "analystTeamName" = $6,
+			    "teamId" = $7,
 			    "updatedAt" = NOW()
 			WHERE id = $1`,
-			id, in.Name, in.Email, in.Role, mustReset, analystTeamName,
+			id, in.Name, in.Email, in.Role, mustReset, analystTeamName, teamID,
 		)
 		if err != nil {
 			var pgErr *pgconn.PgError
@@ -759,6 +771,22 @@ type TransferSalesExecResult struct {
 type TeamBrief struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
+}
+
+func (s *UserStore) TeamIDExists(ctx context.Context, id string) (bool, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return false, nil
+	}
+	var found string
+	err := s.pool.QueryRow(ctx, `SELECT id FROM "Team" WHERE id = $1`, id).Scan(&found)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (s *UserStore) ListTeamsBrief(ctx context.Context) ([]TeamBrief, error) {

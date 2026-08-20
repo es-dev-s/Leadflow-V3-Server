@@ -164,8 +164,16 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request, actor AuthUs
 			teamName = requireString(v, "teamName", teamName, 2, 120)
 		}
 		req.TeamID = nil
+	} else if salesTeamAssignmentRequired(req.Role) {
+		teamName = ""
+		if !isMainTeamLead(actor.Role) {
+			if req.TeamID == nil {
+				v.Add("teamId", "team is required for Sales Executive")
+			}
+		}
 	} else {
 		teamName = ""
+		req.TeamID = nil
 	}
 	if v.HasErrors() {
 		writeValidationError(w, v)
@@ -174,6 +182,19 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request, actor AuthUs
 	if !canCreateRole(actor.Role, req.Role) {
 		writeError(w, http.StatusForbidden, "you cannot create users with this role")
 		return
+	}
+	if salesTeamAssignmentRequired(req.Role) && req.TeamID != nil {
+		ok, err := s.users.TeamIDExists(r.Context(), *req.TeamID)
+		if err != nil {
+			log.Printf("create user team lookup: %v", err)
+			writeError(w, http.StatusInternalServerError, "failed to create user")
+			return
+		}
+		if !ok {
+			v.Add("teamId", "team not found")
+			writeValidationError(w, v)
+			return
+		}
 	}
 
 	user, err := s.users.Create(r.Context(), CreateUserInput{
@@ -311,6 +332,20 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request, id string, a
 			v.Add("teamName", "team name is required for Analyst Team Lead")
 		}
 	}
+	var salesTeamID *string
+	if salesTeamAssignmentRequired(req.Role) && !isMainTeamLead(actor.Role) {
+		trimmed := ""
+		if req.TeamID != nil {
+			trimmed = strings.TrimSpace(*req.TeamID)
+		}
+		if trimmed == "" {
+			if existing.Role != RoleSalesExecutive || existing.TeamID == nil || strings.TrimSpace(*existing.TeamID) == "" {
+				v.Add("teamId", "team is required for Sales Executive")
+			}
+		} else {
+			salesTeamID = &trimmed
+		}
+	}
 	if v.HasErrors() {
 		writeValidationError(w, v)
 		return
@@ -333,6 +368,24 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request, id string, a
 		}
 	}
 
+	var assignTeamID *string
+	if salesTeamID != nil {
+		ok, err := s.users.TeamIDExists(r.Context(), *salesTeamID)
+		if err != nil {
+			log.Printf("update user team lookup: %v", err)
+			writeError(w, http.StatusInternalServerError, "failed to update user")
+			return
+		}
+		if !ok {
+			v.Add("teamId", "team not found")
+			writeValidationError(w, v)
+			return
+		}
+		if existing.Role != RoleSalesExecutive {
+			assignTeamID = salesTeamID
+		}
+	}
+
 	user, err := s.users.Update(r.Context(), id, UpdateUserInput{
 		Name:              req.Name,
 		Email:             req.Email,
@@ -340,6 +393,7 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request, id string, a
 		Password:          password,
 		MustResetPassword: req.MustResetPassword,
 		TeamName:          teamName,
+		TeamID:            assignTeamID,
 	})
 	if err != nil {
 		switch {
@@ -354,6 +408,34 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request, id string, a
 			writeError(w, http.StatusInternalServerError, "failed to update user")
 		}
 		return
+	}
+
+	if salesTeamID != nil && existing.Role == RoleSalesExecutive {
+		current := ""
+		if existing.TeamID != nil {
+			current = strings.TrimSpace(*existing.TeamID)
+		}
+		if current != *salesTeamID {
+			_, xferErr := s.users.TransferSalesExec(r.Context(), TransferSalesExecInput{
+				SalesExecID:    id,
+				ToTeamID:       *salesTeamID,
+				ExpectedTeamID: current,
+				ActorID:        actor.ID,
+				ActorRole:      actor.Role,
+				ActorTeamID:    actor.TeamID,
+			})
+			if xferErr != nil {
+				s.writeTransferError(w, xferErr)
+				return
+			}
+			refreshed, findErr := s.users.FindByID(r.Context(), id)
+			if findErr != nil {
+				log.Printf("update user reload after transfer: %v", findErr)
+				writeError(w, http.StatusInternalServerError, "failed to update user")
+				return
+			}
+			user = refreshed
+		}
 	}
 
 	s.emitUser(EvtUserUpdated, user.ID, "")

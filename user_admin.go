@@ -10,6 +10,26 @@ import (
 
 // actorMayManageTarget enforces role + team scope for MTL managing SEs.
 // Returns false after writing an error response.
+func (s *Server) writeTransferError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, errUserNotFound):
+		writeError(w, http.StatusNotFound, "user not found")
+	case errors.Is(err, errNotSalesExecutive):
+		writeError(w, http.StatusBadRequest, "only sales executives can be transferred")
+	case errors.Is(err, errSameTeam):
+		writeError(w, http.StatusConflict, "sales executive is already on that team")
+	case errors.Is(err, errTeamNotFound):
+		writeError(w, http.StatusBadRequest, "destination team not found")
+	case errors.Is(err, errTeamConflict):
+		writeError(w, http.StatusConflict, "sales executive was moved by someone else — refresh and try again")
+	case errors.Is(err, errTransferForbidden):
+		writeError(w, http.StatusForbidden, "you cannot transfer this sales executive")
+	default:
+		log.Printf("transfer sales exec: %v", err)
+		writeError(w, http.StatusInternalServerError, "failed to transfer sales executive")
+	}
+}
+
 func (s *Server) actorMayManageTarget(w http.ResponseWriter, actor AuthUser, target *UserRecord) bool {
 	if actor.Role == RoleSuperadmin {
 		return true
@@ -71,23 +91,7 @@ func (s *Server) transferSalesExec(w http.ResponseWriter, r *http.Request, id st
 		ActorTeamID:    actor.TeamID,
 	})
 	if err != nil {
-		switch {
-		case errors.Is(err, errUserNotFound):
-			writeError(w, http.StatusNotFound, "user not found")
-		case errors.Is(err, errNotSalesExecutive):
-			writeError(w, http.StatusBadRequest, "only sales executives can be transferred")
-		case errors.Is(err, errSameTeam):
-			writeError(w, http.StatusConflict, "sales executive is already on that team")
-		case errors.Is(err, errTeamNotFound):
-			writeError(w, http.StatusBadRequest, "destination team not found")
-		case errors.Is(err, errTeamConflict):
-			writeError(w, http.StatusConflict, "sales executive was moved by someone else — refresh and try again")
-		case errors.Is(err, errTransferForbidden):
-			writeError(w, http.StatusForbidden, "you cannot transfer this sales executive")
-		default:
-			log.Printf("transfer sales exec: %v", err)
-			writeError(w, http.StatusInternalServerError, "failed to transfer sales executive")
-		}
+		s.writeTransferError(w, err)
 		return
 	}
 

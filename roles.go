@@ -156,6 +156,12 @@ func namedTeamRequiredForRole(role string) bool {
 	return role == RoleMainTeamLead || role == RoleAnalystTeamLead
 }
 
+// salesTeamAssignmentRequired is true when a Sales Executive must be linked
+// to an existing sales Team (by id), rather than creating a named team.
+func salesTeamAssignmentRequired(role string) bool {
+	return role == RoleSalesExecutive
+}
+
 func isMainTeamLead(role string) bool {
 	return role == RoleMainTeamLead
 }
