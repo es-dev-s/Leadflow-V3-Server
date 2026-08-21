@@ -578,6 +578,13 @@ func (s *UserStore) Update(ctx context.Context, id string, in UpdateUserInput) (
 	return s.FindByID(ctx, id)
 }
 
+func analystTeamNameFromRecord(u *UserRecord) string {
+	if u == nil || u.AnalystTeamName == nil {
+		return ""
+	}
+	return strings.TrimSpace(*u.AnalystTeamName)
+}
+
 func resolveAnalystTeamName(existing *UserRecord, role string, teamName *string) (*string, error) {
 	current := existing.AnalystTeamName
 	if teamName == nil {

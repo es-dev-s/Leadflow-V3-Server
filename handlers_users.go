@@ -133,15 +133,18 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request, actor AuthUs
 	if req.TeamName != nil {
 		teamName = strings.TrimSpace(*req.TeamName)
 	}
-	if isAnalystTeamLead(actor.Role) && req.Role == RoleLeadAnalyst && teamName == "" {
-		if actorRec, err := s.users.FindByID(r.Context(), actor.ID); err == nil {
-			if actorRec.AnalystTeamName != nil {
-				teamName = strings.TrimSpace(*actorRec.AnalystTeamName)
+	if isAnalystTeamLead(actor.Role) && req.Role == RoleLeadAnalyst {
+		if teamName == "" {
+			if actorRec, err := s.users.FindByID(r.Context(), actor.ID); err == nil {
+				teamName = analystTeamNameFromRecord(actorRec)
+			} else if !errors.Is(err, errUserNotFound) {
+				log.Printf("create user actor lookup: %v", err)
+				writeError(w, http.StatusInternalServerError, "failed to create user")
+				return
 			}
-		} else if !errors.Is(err, errUserNotFound) {
-			log.Printf("create user actor lookup: %v", err)
-			writeError(w, http.StatusInternalServerError, "failed to create user")
-			return
+		}
+		if teamName == "" {
+			v.Add("teamName", "your account is not linked to an analyst team")
 		}
 	}
 	if namedTeamRequiredForRole(req.Role) {
@@ -330,6 +333,24 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request, id string, a
 	} else if req.Role == RoleAnalystTeamLead {
 		if existing.AnalystTeamName == nil || strings.TrimSpace(*existing.AnalystTeamName) == "" {
 			v.Add("teamName", "team name is required for Analyst Team Lead")
+		}
+	}
+	if isAnalystTeamLead(actor.Role) && req.Role == RoleLeadAnalyst {
+		actorRec, err := s.users.FindByID(r.Context(), actor.ID)
+		if err != nil {
+			if errors.Is(err, errUserNotFound) {
+				writeError(w, http.StatusUnauthorized, "user no longer exists")
+				return
+			}
+			log.Printf("update user actor lookup: %v", err)
+			writeError(w, http.StatusInternalServerError, "failed to update user")
+			return
+		}
+		inherited := analystTeamNameFromRecord(actorRec)
+		if inherited == "" {
+			v.Add("teamName", "your account is not linked to an analyst team")
+		} else {
+			teamName = &inherited
 		}
 	}
 	var salesTeamID *string
