@@ -30,6 +30,9 @@ var (
 	errTeamNotFound          = errors.New("destination team not found")
 	errTeamConflict          = errors.New("sales executive team changed — refresh and try again")
 	errTransferForbidden     = errors.New("you cannot transfer this sales executive")
+	errNotLeadAnalyst        = errors.New("user is not a lead analyst")
+	errSameAnalystTeam       = errors.New("lead analyst is already on that team")
+	errAnalystTeamNotFound   = errors.New("destination analyst team not found")
 )
 
 type UserRecord struct {
@@ -814,6 +817,230 @@ func (s *UserStore) ListTeamsBrief(ctx context.Context) ([]TeamBrief, error) {
 		out = append(out, t)
 	}
 	return out, rows.Err()
+}
+
+type AnalystTeamBrief struct {
+	Name     string `json:"name"`
+	LeadID   string `json:"leadId"`
+	LeadName string `json:"leadName"`
+}
+
+func (s *UserStore) ListAnalystTeamsBrief(ctx context.Context) ([]AnalystTeamBrief, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, name, "analystTeamName"
+		FROM "User"
+		WHERE role = $1
+		  AND "analystTeamName" IS NOT NULL
+		  AND TRIM("analystTeamName") <> ''
+		ORDER BY LOWER(TRIM("analystTeamName")), name ASC`, RoleAnalystTeamLead)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]AnalystTeamBrief, 0, 32)
+	for rows.Next() {
+		var (
+			id, leadName string
+			teamName     *string
+		)
+		if err := rows.Scan(&id, &leadName, &teamName); err != nil {
+			return nil, err
+		}
+		name := strings.TrimSpace(derefString(teamName))
+		if name == "" {
+			continue
+		}
+		out = append(out, AnalystTeamBrief{
+			Name:     name,
+			LeadID:   id,
+			LeadName: leadName,
+		})
+	}
+	return out, rows.Err()
+}
+
+func derefString(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
+func analystTeamNamesEqual(a, b string) bool {
+	return strings.EqualFold(strings.TrimSpace(a), strings.TrimSpace(b))
+}
+
+func (s *UserStore) findAnalystTeamLeadByID(ctx context.Context, id string) (*UserRecord, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil, errAnalystTeamNotFound
+	}
+	rec, err := s.FindByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if rec.Role != RoleAnalystTeamLead {
+		return nil, errAnalystTeamNotFound
+	}
+	if analystTeamNameFromRecord(rec) == "" {
+		return nil, errAnalystTeamNotFound
+	}
+	return rec, nil
+}
+
+func (s *UserStore) findAnalystTeamLeadByTeamName(ctx context.Context, teamName string) (*UserRecord, error) {
+	teamName = strings.TrimSpace(teamName)
+	if teamName == "" {
+		return nil, errAnalystTeamNotFound
+	}
+	var id string
+	err := s.pool.QueryRow(ctx, `
+		SELECT id
+		FROM "User"
+		WHERE role = $1
+		  AND "analystTeamName" IS NOT NULL
+		  AND LOWER(TRIM("analystTeamName")) = LOWER($2)
+		ORDER BY "createdAt" ASC
+		LIMIT 1`, RoleAnalystTeamLead, teamName).Scan(&id)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, errAnalystTeamNotFound
+		}
+		return nil, err
+	}
+	return s.FindByID(ctx, id)
+}
+
+type TransferLeadAnalystInput struct {
+	LeadAnalystID    string
+	ToTeamName       string
+	ToLeadID         string
+	ExpectedTeamName string
+	ActorID          string
+	ActorRole        string
+}
+
+type TransferLeadAnalystResult struct {
+	User         PublicUser `json:"user"`
+	LeadsOwned     int        `json:"leadsOwned"`
+	FromTeamName *string    `json:"fromTeamName"`
+	ToTeamName   string     `json:"toTeamName"`
+}
+
+// TransferLeadAnalyst moves a Lead Analyst onto another analyst team (ATL pod).
+func (s *UserStore) TransferLeadAnalyst(ctx context.Context, in TransferLeadAnalystInput) (TransferLeadAnalystResult, error) {
+	empty := TransferLeadAnalystResult{}
+	laID := strings.TrimSpace(in.LeadAnalystID)
+	toTeamName := strings.TrimSpace(in.ToTeamName)
+	toLeadID := strings.TrimSpace(in.ToLeadID)
+	actorID := strings.TrimSpace(in.ActorID)
+	if laID == "" {
+		return empty, errUserNotFound
+	}
+	if toTeamName == "" && toLeadID == "" {
+		return empty, errAnalystTeamNotFound
+	}
+	if actorID == "" {
+		return empty, fmt.Errorf("actor is required")
+	}
+
+	var destATL *UserRecord
+	var err error
+	if toLeadID != "" {
+		destATL, err = s.findAnalystTeamLeadByID(ctx, toLeadID)
+	} else {
+		destATL, err = s.findAnalystTeamLeadByTeamName(ctx, toTeamName)
+	}
+	if err != nil {
+		return empty, err
+	}
+	canonicalTeam := analystTeamNameFromRecord(destATL)
+	if canonicalTeam == "" {
+		return empty, errAnalystTeamNotFound
+	}
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return empty, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var (
+		role        string
+		fromTeam    *string
+		name, email string
+	)
+	err = tx.QueryRow(ctx, `
+		SELECT role, "analystTeamName", name, email
+		FROM "User"
+		WHERE id = $1
+		FOR UPDATE`, laID).Scan(&role, &fromTeam, &name, &email)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return empty, errUserNotFound
+		}
+		return empty, err
+	}
+	if role != RoleLeadAnalyst {
+		return empty, errNotLeadAnalyst
+	}
+
+	expected := strings.TrimSpace(in.ExpectedTeamName)
+	if expected != "" {
+		cur := derefString(fromTeam)
+		if !analystTeamNamesEqual(cur, expected) {
+			return empty, errTeamConflict
+		}
+	}
+
+	fromName := strings.TrimSpace(derefString(fromTeam))
+	if analystTeamNamesEqual(fromName, canonicalTeam) {
+		return empty, errSameAnalystTeam
+	}
+
+	if in.ActorRole != RoleSuperadmin && in.ActorRole != RoleAnalystTeamLead {
+		return empty, errTransferForbidden
+	}
+
+	now := time.Now().UTC()
+	tag, err := tx.Exec(ctx, `
+		UPDATE "User"
+		SET "analystTeamName" = $2,
+		    "managerId" = $3,
+		    "updatedAt" = $4
+		WHERE id = $1 AND role = $5`,
+		laID, canonicalTeam, destATL.ID, now, RoleLeadAnalyst)
+	if err != nil {
+		return empty, err
+	}
+	if tag.RowsAffected() != 1 {
+		return empty, errTeamConflict
+	}
+
+	var leadsOwned int
+	if err := tx.QueryRow(ctx, `
+		SELECT COUNT(*)::int FROM "Lead" WHERE "createdById" = $1`, laID).Scan(&leadsOwned); err != nil {
+		return empty, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return empty, err
+	}
+
+	user, err := s.FindByID(ctx, laID)
+	if err != nil {
+		return empty, err
+	}
+	var fromPtr *string
+	if fromName != "" {
+		fromPtr = &fromName
+	}
+	return TransferLeadAnalystResult{
+		User:         user.Public(),
+		LeadsOwned:   leadsOwned,
+		FromTeamName: fromPtr,
+		ToTeamName:   canonicalTeam,
+	}, nil
 }
 
 // TransferSalesExec moves an SE to another team and remaps their assigned leads

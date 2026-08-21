@@ -253,6 +253,10 @@ func (s *Server) handleUserByID(w http.ResponseWriter, r *http.Request) {
 		s.transferSalesExec(w, r, id, *authUser)
 		return
 	}
+	if len(parts) == 2 && parts[1] == "transfer-analyst-team" {
+		s.transferLeadAnalyst(w, r, id, *authUser)
+		return
+	}
 	if len(parts) == 2 && parts[1] == "active" {
 		s.setUserActive(w, r, id, *authUser)
 		return

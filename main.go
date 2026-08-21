@@ -119,6 +119,7 @@ func main() {
 	mux.HandleFunc("/api/users", server.requireAuth(server.handleUsers))
 	mux.HandleFunc("/api/users/", server.requireAuth(server.handleUserByID))
 	mux.HandleFunc("/api/teams", server.requireAuth(server.handleTeams))
+	mux.HandleFunc("/api/analyst-teams", server.requireAuth(server.handleAnalystTeams))
 	mux.HandleFunc("/api/leads", server.requireAuth(server.handleLeads))
 	mux.HandleFunc("/api/leads/contact-lookup", server.requireAuth(server.handleLeadContactLookup))
 	mux.HandleFunc("/api/leads/assign", server.requireAuth(server.handleAssignLeads))
