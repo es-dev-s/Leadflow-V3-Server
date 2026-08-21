@@ -47,46 +47,14 @@ func (s *Server) listLeads(w http.ResponseWriter, r *http.Request) {
 	reqCtx, cancel := context.WithTimeout(r.Context(), 12*time.Second)
 	defer cancel()
 
-	analystID := q.Get("analystId")
-	teamID := q.Get("teamId")
-	salesExecID := q.Get("salesExecId")
-	if authUser, ok := userFromContext(r.Context()); ok {
-		if owner := leadDataOwnerID(authUser.Role, authUser.ID); owner != "" {
-			// Lead analysts may only list leads they created.
-			analystID = owner
-		}
-		if seID := leadSalesExecScopeID(authUser.Role, authUser.ID); seID != "" {
-			salesExecID = seID
-		}
-		if scopedTeam := leadTeamScopeID(authUser.Role, authUser.TeamID); scopedTeam != "" {
-			teamID = scopedTeam
-		} else if isMainTeamLead(authUser.Role) {
-			teamID = "00000000-0000-0000-0000-000000000000"
-		}
-	}
+	params := s.leadListParamsFromRequest(r)
+	params.Sort = q.Get("sort")
+	params.Query = q.Get("q")
+	params.Field = q.Get("field")
+	params.Cursor = q.Get("cursor")
+	params.Limit = limit
 
-	result, err := s.leads.List(reqCtx, LeadListParams{
-		Filter:              q.Get("filter"),
-		Sort:                q.Get("sort"),
-		Query:               q.Get("q"),
-		Field:               q.Get("field"),
-		Cursor:              q.Get("cursor"),
-		Limit:               limit,
-		Country:             q.Get("country"),
-		City:                q.Get("city"),
-		TeamID:              teamID,
-		AnalystID:           analystID,
-		SalesExecID:         salesExecID,
-		Source:              q.Get("source"),
-		Portal:              q.Get("portal"),
-		MetaProfile:         q.Get("metaProfile"),
-		Status:              q.Get("status"),
-		Stage:               q.Get("stage"),
-		ServiceLine:         q.Get("serviceLine"),
-		QualificationReason: firstNonEmpty(q.Get("reason"), q.Get("qualificationReason")),
-		AddedFrom:           q.Get("addedFrom"),
-		AddedTo:             q.Get("addedTo"),
-	})
+	result, err := s.leads.List(reqCtx, params)
 	if err != nil {
 		if strings.Contains(err.Error(), "invalid cursor") {
 			writeError(w, http.StatusBadRequest, "invalid cursor")
@@ -925,6 +893,7 @@ func (s *Server) deleteLeads(w http.ResponseWriter, r *http.Request) {
 	ownerID := leadDataOwnerID(authUser.Role, authUser.ID)
 	teamScope := leadTeamScopeID(authUser.Role, authUser.TeamID)
 	seScope := leadSalesExecScopeID(authUser.Role, authUser.ID)
+	atlID, atlTeam := actorAnalystTeamScope(r)
 	if strings.TrimSpace(authUser.Name) != "" {
 		actorName = authUser.Name
 	}
@@ -932,7 +901,7 @@ func (s *Server) deleteLeads(w http.ResponseWriter, r *http.Request) {
 
 	reqCtx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
-	n, err := s.leads.DeleteLeads(reqCtx, req.LeadIDs, ownerID, teamScope, seScope)
+	n, err := s.leads.DeleteLeads(reqCtx, req.LeadIDs, ownerID, teamScope, seScope, atlID, atlTeam)
 	if err != nil {
 		if strings.Contains(err.Error(), "no leads") {
 			writeError(w, http.StatusBadRequest, err.Error())
@@ -1053,6 +1022,7 @@ func (s *Server) handleAssignLeads(w http.ResponseWriter, r *http.Request) {
 	ownerID := leadDataOwnerID(authUser.Role, authUser.ID)
 	teamScope := leadTeamScopeID(authUser.Role, authUser.TeamID)
 	seScope := leadSalesExecScopeID(authUser.Role, authUser.ID)
+	atlID, atlTeam := actorAnalystTeamScope(r)
 	if teamScope == "" && isMainTeamLead(authUser.Role) {
 		writeError(w, http.StatusBadRequest, "your account is not linked to a team")
 		return
@@ -1060,13 +1030,15 @@ func (s *Server) handleAssignLeads(w http.ResponseWriter, r *http.Request) {
 	reqCtx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
 	result, err := s.leads.AssignLeads(reqCtx, AssignLeadInput{
-		LeadIDs:     req.LeadIDs,
-		AssigneeID:  strings.TrimSpace(req.AssigneeID),
-		Kind:        strings.TrimSpace(req.Kind),
-		ActorID:     actorID,
-		CreatedByID: ownerID,
-		TeamID:      teamScope,
-		SalesExecID: seScope,
+		LeadIDs:           req.LeadIDs,
+		AssigneeID:        strings.TrimSpace(req.AssigneeID),
+		Kind:              strings.TrimSpace(req.Kind),
+		ActorID:           actorID,
+		CreatedByID:       ownerID,
+		TeamID:            teamScope,
+		SalesExecID:       seScope,
+		AnalystTeamLeadID: atlID,
+		AnalystTeamName:   atlTeam,
 	})
 	if err != nil {
 		msg := err.Error()

@@ -197,6 +197,22 @@ func leadTeamScopeID(role string, teamID *string) string {
 	return strings.TrimSpace(*teamID)
 }
 
+// leadAnalystTeamLeadID — when non-empty, this ATL may only see leads created
+// by themselves or by Lead Analysts on their analyst team.
+func leadAnalystTeamLeadID(role, userID string) string {
+	if isAnalystTeamLead(role) {
+		return strings.TrimSpace(userID)
+	}
+	return ""
+}
+
+func derefTeamName(name *string) string {
+	if name == nil {
+		return ""
+	}
+	return strings.TrimSpace(*name)
+}
+
 // creatableRoles — roles the actor may assign when creating/updating users.
 func creatableRoles(actorRole string) []string {
 	switch actorRole {

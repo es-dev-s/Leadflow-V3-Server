@@ -57,41 +57,10 @@ func (s *Server) handleLeadsExport(w http.ResponseWriter, r *http.Request) {
 	defer leadExportFlights.release(authUser.ID)
 
 	q := r.URL.Query()
-	analystID := q.Get("analystId")
-	teamID := q.Get("teamId")
-	salesExecID := q.Get("salesExecId")
-	if owner := leadDataOwnerID(authUser.Role, authUser.ID); owner != "" {
-		analystID = owner
-	}
-	if seID := leadSalesExecScopeID(authUser.Role, authUser.ID); seID != "" {
-		salesExecID = seID
-	}
-	if scopedTeam := leadTeamScopeID(authUser.Role, authUser.TeamID); scopedTeam != "" {
-		teamID = scopedTeam
-	} else if isMainTeamLead(authUser.Role) {
-		teamID = "00000000-0000-0000-0000-000000000000"
-	}
-
-	params := LeadListParams{
-		Filter:              q.Get("filter"),
-		Sort:                q.Get("sort"),
-		Query:               q.Get("q"),
-		Field:               q.Get("field"),
-		Country:             q.Get("country"),
-		City:                q.Get("city"),
-		TeamID:              teamID,
-		AnalystID:           analystID,
-		SalesExecID:         salesExecID,
-		Source:              q.Get("source"),
-		Portal:              q.Get("portal"),
-		MetaProfile:         q.Get("metaProfile"),
-		Status:              q.Get("status"),
-		Stage:               q.Get("stage"),
-		ServiceLine:         q.Get("serviceLine"),
-		QualificationReason: firstNonEmpty(q.Get("reason"), q.Get("qualificationReason")),
-		AddedFrom:           q.Get("addedFrom"),
-		AddedTo:             q.Get("addedTo"),
-	}
+	params := s.leadListParamsFromRequest(r)
+	params.Sort = q.Get("sort")
+	params.Query = q.Get("q")
+	params.Field = q.Get("field")
 
 	reqCtx, cancel := context.WithTimeout(r.Context(), 3*time.Minute)
 	defer cancel()

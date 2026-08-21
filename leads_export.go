@@ -327,6 +327,8 @@ func exportScopeNote(role string) string {
 		return "Lead Analyst scope — leads you created"
 	case isMainTeamLead(role):
 		return "Main Team Lead scope — your team only"
+	case isAnalystTeamLead(role):
+		return "Analyst Team Lead scope — leads added by your Lead Analysts"
 	default:
 		return "Workspace scope"
 	}

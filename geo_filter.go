@@ -7,11 +7,13 @@ import (
 
 // GeoFilter scopes lead aggregates by country, city, and optional creator/team/SE.
 type GeoFilter struct {
-	Country     string
-	City        string
-	CreatedByID string // when set, only leads created by this user
-	TeamID      string // when set, only leads on this team
-	SalesExecID string // when set, only leads assigned to this SE
+	Country           string
+	City              string
+	CreatedByID       string // when set, only leads created by this user
+	TeamID            string // when set, only leads on this team
+	SalesExecID       string // when set, only leads assigned to this SE
+	AnalystTeamLeadID string
+	AnalystTeamName   string
 }
 
 func parseGeoFilter(country, city string) GeoFilter {
@@ -22,7 +24,7 @@ func parseGeoFilter(country, city string) GeoFilter {
 }
 
 func (f GeoFilter) Active() bool {
-	return f.Country != "" || f.City != "" || f.CreatedByID != "" || f.TeamID != "" || f.SalesExecID != ""
+	return f.Country != "" || f.City != "" || f.CreatedByID != "" || f.TeamID != "" || f.SalesExecID != "" || strings.TrimSpace(f.AnalystTeamLeadID) != ""
 }
 
 // isBlankGeoLabel treats Unknown / none / unassigned as the blank geo bucket.
@@ -111,6 +113,10 @@ func (f GeoFilter) leadClause(alias string, argStart int) (clause string, args [
 			args = append(args, seID)
 			parts = append(parts, fmt.Sprintf(`%s"assignedSalesExecId" = $%d`, alias, n))
 		}
+	}
+
+	if sql := analystTeamLeadScopeSQL(alias, &args, f.AnalystTeamLeadID, f.AnalystTeamName); sql != "" {
+		parts = append(parts, sql)
 	}
 
 	return strings.Join(parts, " AND "), args

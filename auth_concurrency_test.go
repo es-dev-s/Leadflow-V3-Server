@@ -264,6 +264,12 @@ func TestCanCreateUsersRBAC(t *testing.T) {
 	if leadTeamScopeID(RoleSuperadmin, &team) != "" {
 		t.Fatal("superadmin must not be team-scoped")
 	}
+	if leadAnalystTeamLeadID(RoleAnalystTeamLead, "atl-1") != "atl-1" {
+		t.Fatal("analyst team lead should be analyst-team-scoped")
+	}
+	if leadAnalystTeamLeadID(RoleSuperadmin, "atl-1") != "" {
+		t.Fatal("superadmin must not be analyst-team-scoped")
+	}
 	if isValidRole("SUPPORT") {
 		t.Fatal("SUPPORT is not a CRM role")
 	}

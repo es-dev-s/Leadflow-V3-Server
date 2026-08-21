@@ -119,6 +119,49 @@ func TestLeadScopeWhereAppliesPresetWithoutStatus(t *testing.T) {
 	}
 }
 
+func TestLeadScopeWhereAnalystTeamLead(t *testing.T) {
+	sql, args := leadScopeWhere(LeadListParams{
+		AnalystTeamLeadID: "atl-1",
+		AnalystTeamName:   "North Pod",
+	}, true)
+	if !strings.Contains(sql, `"analystTeamName"`) {
+		t.Fatalf("ATL scope should match analyst team name: %s", sql)
+	}
+	if !strings.Contains(sql, `creator."managerId"`) {
+		t.Fatalf("ATL scope should match reporting LAs: %s", sql)
+	}
+	foundTeam := false
+	foundATL := false
+	foundRole := false
+	for _, a := range args {
+		s, ok := a.(string)
+		if !ok {
+			continue
+		}
+		if s == "North Pod" {
+			foundTeam = true
+		}
+		if s == "atl-1" {
+			foundATL = true
+		}
+		if s == RoleLeadAnalyst {
+			foundRole = true
+		}
+	}
+	if !foundTeam || !foundATL || !foundRole {
+		t.Fatalf("ATL scope args missing: %#v", args)
+	}
+
+	sql, args = leadScopeWhere(LeadListParams{AnalystTeamLeadID: "atl-1"}, true)
+	if strings.Contains(sql, `"analystTeamName"`) {
+		t.Fatalf("unlinked ATL should not match team name: %s", sql)
+	}
+	if !strings.Contains(sql, `creator."managerId"`) {
+		t.Fatalf("unlinked ATL should still match reporting LAs: %s", sql)
+	}
+	_ = args
+}
+
 func TestLeadScopeWhereSkipsPresetWhenStatusSet(t *testing.T) {
 	sql, args := leadScopeWhere(LeadListParams{
 		Filter: "qualified",

@@ -88,7 +88,11 @@ type LeadListParams struct {
 	AnalystID   string // "none" = unassigned
 	SalesExecID string // "none" = unassigned
 	// ManagerID scopes to leads whose creator reports to this manager (ATL).
-	ManagerID   string
+	ManagerID string
+	// AnalystTeamLeadID + AnalystTeamName restrict ATLs to leads created by
+	// themselves or by Lead Analysts on the same analyst team.
+	AnalystTeamLeadID string
+	AnalystTeamName   string
 	Source      string // "none" = blank/unassigned
 	Portal      string // "none" = blank/unassigned
 	MetaProfile string // "none" = blank/unassigned
@@ -581,6 +585,48 @@ func appendNullableID(where *[]string, args *[]any, column, value string) {
 	*where = append(*where, fmt.Sprintf(`%s = $%d`, column, len(*args)))
 }
 
+// analystTeamLeadScopeSQL limits leads to those created by this ATL or by
+// Lead Analysts on the same analyst team (name match or managerId).
+// leadPrefix is "" or "l." (including the dot).
+func analystTeamLeadScopeSQL(leadPrefix string, args *[]any, atlID, teamName string) string {
+	atlID = strings.TrimSpace(atlID)
+	if atlID == "" || args == nil {
+		return ""
+	}
+	*args = append(*args, atlID)
+	atlN := len(*args)
+	*args = append(*args, RoleLeadAnalyst)
+	roleN := len(*args)
+	createdBy := leadPrefix + `"createdById"`
+	teamName = strings.TrimSpace(teamName)
+	if teamName == "" {
+		return fmt.Sprintf(`EXISTS (
+			SELECT 1 FROM "User" creator
+			WHERE creator.id = %s
+			  AND (
+			    creator.id = $%d
+			    OR (creator.role = $%d AND creator."managerId" = $%d)
+			  )
+		)`, createdBy, atlN, roleN, atlN)
+	}
+	*args = append(*args, teamName)
+	teamN := len(*args)
+	return fmt.Sprintf(`EXISTS (
+		SELECT 1 FROM "User" creator
+		WHERE creator.id = %s
+		  AND (
+		    creator.id = $%d
+		    OR (
+		      creator.role = $%d
+		      AND (
+		        creator."managerId" = $%d
+		        OR LOWER(BTRIM(COALESCE(creator."analystTeamName", ''))) = LOWER(BTRIM($%d::text))
+		      )
+		    )
+		  )
+	)`, createdBy, atlN, roleN, atlN, teamN)
+}
+
 func appendLeadFacets(where *[]string, args *[]any, params LeadListParams) {
 	geo := parseGeoFilter(params.Country, params.City)
 	if geo.Country != "" {
@@ -608,6 +654,9 @@ func appendLeadFacets(where *[]string, args *[]any, params LeadListParams) {
 			WHERE creator.id = l."createdById"
 			  AND creator."managerId" = $%d
 		)`, len(*args)))
+	}
+	if sql := analystTeamLeadScopeSQL("l.", args, params.AnalystTeamLeadID, params.AnalystTeamName); sql != "" {
+		*where = append(*where, sql)
 	}
 	appendBlankOrEqual(where, args, `l.source`, params.Source)
 	appendBlankOrEqual(where, args, `l."portalWebsite"`, params.Portal)
@@ -1663,11 +1712,13 @@ func (s *LeadStore) analystLeadStats(ctx context.Context, filter GeoFilter) ([]A
 
 func (s *LeadStore) salesExecOutcomes(ctx context.Context, filter GeoFilter) ([]SalesExecOutcome, error) {
 	params := LeadListParams{
-		Country:     filter.Country,
-		City:        filter.City,
-		AnalystID:   filter.CreatedByID,
-		TeamID:      filter.TeamID,
-		SalesExecID: filter.SalesExecID,
+		Country:           filter.Country,
+		City:              filter.City,
+		AnalystID:         filter.CreatedByID,
+		TeamID:            filter.TeamID,
+		SalesExecID:       filter.SalesExecID,
+		AnalystTeamLeadID: filter.AnalystTeamLeadID,
+		AnalystTeamName:   filter.AnalystTeamName,
 	}
 	where, args := leadScopeWhereAssignedToSalesExec(params)
 	rows, err := s.pool.Query(ctx, `
@@ -1702,11 +1753,13 @@ func (s *LeadStore) salesExecOutcomes(ctx context.Context, filter GeoFilter) ([]
 
 func (s *LeadStore) qualificationReasons(ctx context.Context, filter GeoFilter) ([]StatusReasonCount, error) {
 	page, err := s.paginatedQualificationReasons(ctx, LeadListParams{
-		Country:     filter.Country,
-		City:        filter.City,
-		AnalystID:   filter.CreatedByID,
-		TeamID:      filter.TeamID,
-		SalesExecID: filter.SalesExecID,
+		Country:           filter.Country,
+		City:              filter.City,
+		AnalystID:         filter.CreatedByID,
+		TeamID:            filter.TeamID,
+		SalesExecID:       filter.SalesExecID,
+		AnalystTeamLeadID: filter.AnalystTeamLeadID,
+		AnalystTeamName:   filter.AnalystTeamName,
 	}, "", 0, maxSummaryBucketLimit)
 	if err != nil {
 		return nil, err
@@ -2868,6 +2921,29 @@ func (s *LeadStore) IsCreatedBy(ctx context.Context, leadID, userID string) (boo
 			SELECT 1 FROM "Lead"
 			WHERE id = $1 AND "createdById" = $2
 		)`, leadID, userID).Scan(&ok)
+	return ok, err
+}
+
+// IsCreatedByAnalystTeam reports whether the lead was created by this ATL
+// or by a Lead Analyst on the same analyst team.
+func (s *LeadStore) IsCreatedByAnalystTeam(ctx context.Context, leadID, atlID, teamName string) (bool, error) {
+	leadID = strings.TrimSpace(leadID)
+	atlID = strings.TrimSpace(atlID)
+	if leadID == "" || atlID == "" {
+		return false, nil
+	}
+	args := []any{leadID}
+	scope := analystTeamLeadScopeSQL("l.", &args, atlID, teamName)
+	if scope == "" {
+		return false, nil
+	}
+	var ok bool
+	err := s.pool.QueryRow(ctx, `
+		SELECT EXISTS(
+			SELECT 1 FROM "Lead" l
+			WHERE l.id = $1
+			  AND `+scope+`
+		)`, args...).Scan(&ok)
 	return ok, err
 }
 

@@ -49,13 +49,31 @@ func actorLeadSalesExecID(r *http.Request) string {
 	return leadSalesExecScopeID(authUser.Role, authUser.ID)
 }
 
-// applyActorLeadScope forces creator / team / assignee scope for LA / MTL / SE.
+func actorAnalystTeamScope(r *http.Request) (atlID, teamName string) {
+	authUser, ok := userFromContext(r.Context())
+	if !ok {
+		return "", ""
+	}
+	atlID = leadAnalystTeamLeadID(authUser.Role, authUser.ID)
+	if atlID == "" {
+		return "", ""
+	}
+	return atlID, derefTeamName(authUser.AnalystTeamName)
+}
+
+// applyActorLeadScope forces creator / team / assignee / analyst-team scope.
 func applyActorLeadScope(r *http.Request, params *LeadListParams) {
 	if owner := actorLeadOwnerID(r); owner != "" {
 		params.AnalystID = owner
 	}
 	if seID := actorLeadSalesExecID(r); seID != "" {
 		params.SalesExecID = seID
+	}
+	if atlID, teamName := actorAnalystTeamScope(r); atlID != "" {
+		params.AnalystTeamLeadID = atlID
+		params.AnalystTeamName = teamName
+		// Client managerId must not widen or fight ATL team scope.
+		params.ManagerID = ""
 	}
 	if teamID := actorLeadTeamID(r); teamID != "" {
 		params.TeamID = teamID
@@ -96,6 +114,7 @@ func (s *Server) geoFilterFromRequest(r *http.Request) GeoFilter {
 	filter.CreatedByID = actorLeadOwnerID(r)
 	filter.TeamID = actorLeadTeamID(r)
 	filter.SalesExecID = actorLeadSalesExecID(r)
+	filter.AnalystTeamLeadID, filter.AnalystTeamName = actorAnalystTeamScope(r)
 	if filter.TeamID == "" {
 		if authUser, ok := userFromContext(r.Context()); ok && isMainTeamLead(authUser.Role) {
 			filter.TeamID = "00000000-0000-0000-0000-000000000000"
@@ -144,6 +163,20 @@ func (s *Server) requireLeadAccess(w http.ResponseWriter, r *http.Request, leadI
 		ok, err := s.leads.IsAssignedToSalesExec(r.Context(), leadID, seID)
 		if err != nil {
 			log.Printf("lead assignee check: %v", err)
+			writeError(w, http.StatusInternalServerError, "failed to authorize lead access")
+			return false
+		}
+		if !ok {
+			writeError(w, http.StatusNotFound, "lead not found")
+			return false
+		}
+		return true
+	}
+
+	if atlID, teamName := actorAnalystTeamScope(r); atlID != "" {
+		ok, err := s.leads.IsCreatedByAnalystTeam(r.Context(), leadID, atlID, teamName)
+		if err != nil {
+			log.Printf("lead analyst-team check: %v", err)
 			writeError(w, http.StatusInternalServerError, "failed to authorize lead access")
 			return false
 		}

@@ -20,13 +20,15 @@ type AssignableUser struct {
 }
 
 type AssignLeadInput struct {
-	LeadIDs     []string
-	AssigneeID  string
-	Kind        string // team-lead | member
-	ActorID     string
-	CreatedByID string // when set, only allow leads created by this user
-	TeamID      string // when set, only allow leads / assignees on this team
-	SalesExecID string // when set, only allow leads assigned to this SE
+	LeadIDs           []string
+	AssigneeID        string
+	Kind              string // team-lead | member
+	ActorID           string
+	CreatedByID       string // when set, only allow leads created by this user
+	TeamID            string // when set, only allow leads / assignees on this team
+	SalesExecID       string // when set, only allow leads assigned to this SE
+	AnalystTeamLeadID string
+	AnalystTeamName   string
 }
 
 type LeadAssignmentResult struct {
@@ -221,6 +223,9 @@ func (s *LeadStore) AssignLeads(ctx context.Context, in AssignLeadInput) (Assign
 		lockQuery += fmt.Sprintf(` AND "assignedSalesExecId" = $%d`, argN)
 		lockArgs = append(lockArgs, seScope)
 	}
+	if sql := analystTeamLeadScopeSQL("", &lockArgs, in.AnalystTeamLeadID, in.AnalystTeamName); sql != "" {
+		lockQuery += ` AND ` + sql
+	}
 	lockQuery += ` FOR UPDATE`
 
 	rows, err := tx.Query(ctx, lockQuery, lockArgs...)
@@ -385,7 +390,7 @@ func (s *LeadStore) LeadNameBriefs(ctx context.Context, leadIDs []string) (map[s
 	return out, rows.Err()
 }
 
-func (s *LeadStore) DeleteLeads(ctx context.Context, leadIDs []string, createdByID, teamID, salesExecID string) (int, error) {
+func (s *LeadStore) DeleteLeads(ctx context.Context, leadIDs []string, createdByID, teamID, salesExecID, analystTeamLeadID, analystTeamName string) (int, error) {
 	if len(leadIDs) == 0 {
 		return 0, fmt.Errorf("no leads selected")
 	}
@@ -430,6 +435,9 @@ func (s *LeadStore) DeleteLeads(ctx context.Context, leadIDs []string, createdBy
 		deleteSQL += fmt.Sprintf(` AND "assignedSalesExecId" = $%d`, argN)
 		deleteArgs = append(deleteArgs, seScope)
 	}
+	if sql := analystTeamLeadScopeSQL("", &deleteArgs, analystTeamLeadID, analystTeamName); sql != "" {
+		deleteSQL += ` AND ` + sql
+	}
 
 	// Only remove handoffs for leads that will actually be deleted.
 	handoffSQL := `DELETE FROM "LeadHandoffLog" WHERE "leadId" IN (
@@ -450,6 +458,9 @@ func (s *LeadStore) DeleteLeads(ctx context.Context, leadIDs []string, createdBy
 		argN++
 		handoffSQL += fmt.Sprintf(` AND "assignedSalesExecId" = $%d`, argN)
 		handoffArgs = append(handoffArgs, seScope)
+	}
+	if sql := analystTeamLeadScopeSQL("", &handoffArgs, analystTeamLeadID, analystTeamName); sql != "" {
+		handoffSQL += ` AND ` + sql
 	}
 	handoffSQL += `)`
 	if _, err = tx.Exec(ctx, handoffSQL, handoffArgs...); err != nil {

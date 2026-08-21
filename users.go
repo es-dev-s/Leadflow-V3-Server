@@ -107,7 +107,14 @@ func (u UserRecord) Public() PublicUser {
 }
 
 func (u UserRecord) Auth() AuthUser {
-	return AuthUser{ID: u.ID, Email: u.Email, Name: u.Name, Role: u.Role, TeamID: u.TeamID}
+	return AuthUser{
+		ID:              u.ID,
+		Email:           u.Email,
+		Name:            u.Name,
+		Role:            u.Role,
+		TeamID:          u.TeamID,
+		AnalystTeamName: u.AnalystTeamName,
+	}
 }
 
 type UserStore struct {

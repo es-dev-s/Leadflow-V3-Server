@@ -16,11 +16,12 @@ type contextKey string
 const authUserKey contextKey = "authUser"
 
 type AuthUser struct {
-	ID     string  `json:"id"`
-	Email  string  `json:"email"`
-	Name   string  `json:"name"`
-	Role   string  `json:"role"`
-	TeamID *string `json:"teamId,omitempty"`
+	ID              string  `json:"id"`
+	Email           string  `json:"email"`
+	Name            string  `json:"name"`
+	Role            string  `json:"role"`
+	TeamID          *string `json:"teamId,omitempty"`
+	AnalystTeamName *string `json:"analystTeamName,omitempty"`
 }
 
 type Claims struct {
