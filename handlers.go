@@ -236,6 +236,7 @@ type AuthResponse struct {
 	// Token is returned for API/automation clients (Authorization header).
 	// Browsers should rely on the HttpOnly cookie and must not persist this.
 	Token     string     `json:"token,omitempty"`
+	SessionID string     `json:"sessionId,omitempty"`
 	ExpiresAt time.Time  `json:"expiresAt"`
 	User      PublicUser `json:"user"`
 }

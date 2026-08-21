@@ -41,3 +41,34 @@ func TestRealtimeHubPresenceUniqueUsers(t *testing.T) {
 		t.Fatal("sales executive should be offline after the last tab disconnects")
 	}
 }
+
+func TestDropUserDoesNotKickOtherAccounts(t *testing.T) {
+	hub := NewRealtimeHub()
+	a := &sseClient{id: "a1", userID: "user-a", sid: "sid-a", ch: make(chan []byte, 8)}
+	b := &sseClient{id: "b1", userID: "user-b", sid: "sid-b", ch: make(chan []byte, 8)}
+	hub.add(a)
+	hub.add(b)
+
+	hub.DropUser("user-a")
+	if hub.IsOnline("user-a") {
+		t.Fatal("replaced account must be dropped")
+	}
+	if !hub.IsOnline("user-b") {
+		t.Fatal("a login on another account must not drop this user")
+	}
+
+	keep := &sseClient{id: "a2", userID: "user-a", sid: "sid-new", ch: make(chan []byte, 8)}
+	old := &sseClient{id: "a3", userID: "user-a", sid: "sid-old", ch: make(chan []byte, 8)}
+	hub.add(keep)
+	hub.add(old)
+	hub.DropUserExcept("user-a", "sid-new")
+	if hub.clientCount() != 2 {
+		t.Fatalf("expected live session + other account, got %d clients", hub.clientCount())
+	}
+	if !hub.IsOnline("user-a") {
+		t.Fatal("new session SSE must stay connected")
+	}
+	if !hub.IsOnline("user-b") {
+		t.Fatal("other account must stay online after DropUserExcept")
+	}
+}

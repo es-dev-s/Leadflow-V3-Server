@@ -50,6 +50,7 @@ type UserRecord struct {
 	IsOutboundAnalyst  bool
 	IsActive           bool
 	IsActiveSession    bool
+	ActiveSessionHash  *string
 	ActiveSessionSetAt *time.Time
 	Image              *string
 	CreatedAt          time.Time
@@ -132,7 +133,7 @@ func (s *UserStore) FindByEmail(ctx context.Context, email string) (*UserRecord,
 		       u."managerId", m.name,
 		       u."isOutboundAnalyst",
 		       COALESCE(u."isActive", TRUE),
-		       (u."activeSessionHash" IS NOT NULL AND u."activeSessionHash" <> ''),
+		       u."activeSessionHash",
 		       u."activeSessionSetAt", u.image,
 		       u."createdAt", u."updatedAt"
 		FROM "User" u
@@ -146,7 +147,7 @@ func (s *UserStore) FindByEmail(ctx context.Context, email string) (*UserRecord,
 		&u.ID, &u.Email, &u.Name, &u.Role, &u.PasswordHash, &u.MustResetPassword,
 		&u.TeamID, &u.TeamName, &u.AnalystTeamName,
 		&u.ManagerID, &u.ManagerName,
-		&u.IsOutboundAnalyst, &u.IsActive, &u.IsActiveSession, &u.ActiveSessionSetAt, &u.Image,
+		&u.IsOutboundAnalyst, &u.IsActive, &u.ActiveSessionHash, &u.ActiveSessionSetAt, &u.Image,
 		&u.CreatedAt, &u.UpdatedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -155,6 +156,7 @@ func (s *UserStore) FindByEmail(ctx context.Context, email string) (*UserRecord,
 	if err != nil {
 		return nil, err
 	}
+	u.hydrateSessionFlags()
 	return &u, nil
 }
 
@@ -165,7 +167,7 @@ func (s *UserStore) FindByID(ctx context.Context, id string) (*UserRecord, error
 		       u."managerId", m.name,
 		       u."isOutboundAnalyst",
 		       COALESCE(u."isActive", TRUE),
-		       (u."activeSessionHash" IS NOT NULL AND u."activeSessionHash" <> ''),
+		       u."activeSessionHash",
 		       u."activeSessionSetAt", u.image,
 		       u."createdAt", u."updatedAt"
 		FROM "User" u
@@ -179,7 +181,7 @@ func (s *UserStore) FindByID(ctx context.Context, id string) (*UserRecord, error
 		&u.ID, &u.Email, &u.Name, &u.Role, &u.PasswordHash, &u.MustResetPassword,
 		&u.TeamID, &u.TeamName, &u.AnalystTeamName,
 		&u.ManagerID, &u.ManagerName,
-		&u.IsOutboundAnalyst, &u.IsActive, &u.IsActiveSession, &u.ActiveSessionSetAt, &u.Image,
+		&u.IsOutboundAnalyst, &u.IsActive, &u.ActiveSessionHash, &u.ActiveSessionSetAt, &u.Image,
 		&u.CreatedAt, &u.UpdatedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -188,7 +190,45 @@ func (s *UserStore) FindByID(ctx context.Context, id string) (*UserRecord, error
 	if err != nil {
 		return nil, err
 	}
+	u.hydrateSessionFlags()
 	return &u, nil
+}
+
+func (u *UserRecord) hydrateSessionFlags() {
+	u.IsActiveSession = u.ActiveSessionHash != nil && strings.TrimSpace(*u.ActiveSessionHash) != ""
+}
+
+func (u *UserRecord) sessionMatches(jti string) bool {
+	return sessionMatchesHash(u.ActiveSessionHash, jti)
+}
+
+// ReplaceActiveSession makes jti the sole live session for this user.
+func (s *UserStore) ReplaceActiveSession(ctx context.Context, userID, jti string) error {
+	userID = strings.TrimSpace(userID)
+	jti = strings.TrimSpace(jti)
+	if userID == "" || jti == "" {
+		return errors.New("session id required")
+	}
+	now := time.Now().UTC()
+	_, err := s.pool.Exec(ctx, `
+		UPDATE "User"
+		SET "activeSessionHash" = $2, "activeSessionSetAt" = $3, "updatedAt" = $3
+		WHERE id = $1`, userID, sessionHash(jti), now)
+	return err
+}
+
+// ClearActiveSessionIfCurrent clears the live session only when jti is current.
+func (s *UserStore) ClearActiveSessionIfCurrent(ctx context.Context, userID, jti string) error {
+	userID = strings.TrimSpace(userID)
+	jti = strings.TrimSpace(jti)
+	if userID == "" || jti == "" {
+		return nil
+	}
+	_, err := s.pool.Exec(ctx, `
+		UPDATE "User"
+		SET "activeSessionHash" = NULL, "activeSessionSetAt" = NULL, "updatedAt" = NOW()
+		WHERE id = $1 AND "activeSessionHash" = $2`, userID, sessionHash(jti))
+	return err
 }
 
 func (s *UserStore) UpdatePasswordHash(ctx context.Context, id, hash string) error {
@@ -370,7 +410,7 @@ func (s *UserStore) List(ctx context.Context, limit int) ([]PublicUser, error) {
 		       u."managerId", m.name,
 		       u."isOutboundAnalyst",
 		       COALESCE(u."isActive", TRUE),
-		       (u."activeSessionHash" IS NOT NULL AND u."activeSessionHash" <> ''),
+		       u."activeSessionHash",
 		       u."activeSessionSetAt", u.image,
 		       u."createdAt", u."updatedAt"
 		FROM "User" u
@@ -390,11 +430,12 @@ func (s *UserStore) List(ctx context.Context, limit int) ([]PublicUser, error) {
 			&u.ID, &u.Email, &u.Name, &u.Role, &u.PasswordHash, &u.MustResetPassword,
 			&u.TeamID, &u.TeamName, &u.AnalystTeamName,
 			&u.ManagerID, &u.ManagerName,
-			&u.IsOutboundAnalyst, &u.IsActive, &u.IsActiveSession, &u.ActiveSessionSetAt, &u.Image,
+			&u.IsOutboundAnalyst, &u.IsActive, &u.ActiveSessionHash, &u.ActiveSessionSetAt, &u.Image,
 			&u.CreatedAt, &u.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
+		u.hydrateSessionFlags()
 		out = append(out, u.Public())
 	}
 	return out, rows.Err()

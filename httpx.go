@@ -34,33 +34,52 @@ func writeValidationError(w http.ResponseWriter, v *ValidationError) {
 
 func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 	return withCORS(func(w http.ResponseWriter, r *http.Request) {
-		token := s.accessToken(r)
-		if token == "" {
-			writeError(w, http.StatusUnauthorized, "authentication required")
-			return
-		}
-		claimsUser, err := s.tokens.Parse(token)
-		if err != nil {
-			writeError(w, http.StatusUnauthorized, "invalid or expired token")
-			return
-		}
-		// Re-load from DB so deleted / deactivated users and role changes apply immediately.
-		dbUser, err := s.users.FindByID(r.Context(), claimsUser.ID)
-		if err != nil {
-			writeError(w, http.StatusUnauthorized, "invalid or expired token")
-			return
-		}
-		if !dbUser.IsActive {
-			writeError(w, http.StatusForbidden, "account is inactive")
-			return
-		}
-		if !isValidRole(dbUser.Role) {
-			writeError(w, http.StatusForbidden, "account role is invalid")
+		dbUser, claims, status, msg := s.loadAuthedUser(r)
+		if status != 0 {
+			writeError(w, status, msg)
 			return
 		}
 		auth := dbUser.Auth()
+		auth.SessionID = claims.SessionID
 		next(w, r.WithContext(withUser(r.Context(), &auth)))
 	})
+}
+
+func clientPresentedSessionID(r *http.Request) string {
+	if id := strings.TrimSpace(r.Header.Get(sessionHeaderName)); id != "" {
+		return id
+	}
+	return strings.TrimSpace(r.URL.Query().Get(sessionQueryName))
+}
+
+// loadAuthedUser validates the cookie/Bearer JWT against the live single session.
+// status is 0 on success.
+func (s *Server) loadAuthedUser(r *http.Request) (*UserRecord, *AuthUser, int, string) {
+	token := s.accessToken(r)
+	if token == "" {
+		return nil, nil, http.StatusUnauthorized, "authentication required"
+	}
+	claimsUser, err := s.tokens.Parse(token)
+	if err != nil {
+		return nil, nil, http.StatusUnauthorized, "invalid or expired token"
+	}
+	dbUser, err := s.users.FindByID(r.Context(), claimsUser.ID)
+	if err != nil {
+		return nil, nil, http.StatusUnauthorized, "invalid or expired token"
+	}
+	if !dbUser.IsActive {
+		return nil, nil, http.StatusForbidden, "account is inactive"
+	}
+	if !isValidRole(dbUser.Role) {
+		return nil, nil, http.StatusForbidden, "account role is invalid"
+	}
+	if !dbUser.sessionMatches(claimsUser.SessionID) {
+		return nil, nil, http.StatusUnauthorized, errSignedInElsewhere
+	}
+	if presented := clientPresentedSessionID(r); presented != "" && presented != claimsUser.SessionID {
+		return nil, nil, http.StatusUnauthorized, errSignedInElsewhere
+	}
+	return dbUser, claimsUser, 0, ""
 }
 
 func (s *Server) requireRole(roles ...string) func(http.HandlerFunc) http.HandlerFunc {

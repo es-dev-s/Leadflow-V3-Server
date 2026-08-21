@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -22,6 +23,7 @@ type AuthUser struct {
 	Role            string  `json:"role"`
 	TeamID          *string `json:"teamId,omitempty"`
 	AnalystTeamName *string `json:"analystTeamName,omitempty"`
+	SessionID       string  `json:"-"`
 }
 
 type Claims struct {
@@ -40,22 +42,24 @@ func NewTokenService(secret string, ttl time.Duration) *TokenService {
 	return &TokenService{secret: []byte(secret), ttl: ttl}
 }
 
-func (t *TokenService) Issue(user AuthUser) (string, time.Time, error) {
-	expires := time.Now().UTC().Add(t.ttl)
+func (t *TokenService) Issue(user AuthUser) (token, jti string, expires time.Time, err error) {
+	expires = time.Now().UTC().Add(t.ttl)
+	jti = uuid.NewString()
 	claims := Claims{
 		Email: user.Email,
 		Name:  user.Name,
 		Role:  user.Role,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Subject:   user.ID,
+			ID:        jti,
 			ExpiresAt: jwt.NewNumericDate(expires),
 			IssuedAt:  jwt.NewNumericDate(time.Now().UTC()),
 			Issuer:    "leadflow-backend",
 		},
 	}
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	signed, err := token.SignedString(t.secret)
-	return signed, expires, err
+	parsed := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	token, err = parsed.SignedString(t.secret)
+	return token, jti, expires, err
 }
 
 func (t *TokenService) Parse(tokenStr string) (*AuthUser, error) {
@@ -76,10 +80,11 @@ func (t *TokenService) Parse(tokenStr string) (*AuthUser, error) {
 		return nil, errors.New("incomplete token claims")
 	}
 	return &AuthUser{
-		ID:    claims.Subject,
-		Email: claims.Email,
-		Name:  claims.Name,
-		Role:  claims.Role,
+		ID:        claims.Subject,
+		Email:     claims.Email,
+		Name:      claims.Name,
+		Role:      claims.Role,
+		SessionID: strings.TrimSpace(claims.ID),
 	}, nil
 }
 

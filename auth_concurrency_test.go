@@ -70,7 +70,7 @@ func TestTokenServiceConcurrentIssueParseNoMix(t *testing.T) {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				token, _, err := tokens.Issue(user)
+				token, jti, _, err := tokens.Issue(user)
 				if err != nil {
 					errCh <- err
 					return
@@ -78,6 +78,10 @@ func TestTokenServiceConcurrentIssueParseNoMix(t *testing.T) {
 				parsed, err := tokens.Parse(token)
 				if err != nil {
 					errCh <- err
+					return
+				}
+				if parsed.SessionID != jti {
+					errCh <- errIdentityMix(user, *parsed)
 					return
 				}
 				if parsed.ID != user.ID || parsed.Email != user.Email || parsed.Role != user.Role {

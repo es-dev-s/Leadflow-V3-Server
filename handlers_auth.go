@@ -95,10 +95,48 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, expires, err := s.tokens.Issue(user.Auth())
+	s.issueLiveSession(w, r, user, true)
+}
+
+// handleClaimSession mints a new sole session for this browser tab when it
+// already has a valid cookie but no per-tab session id (new window / refresh).
+func (s *Server) handleClaimSession(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	authUser, ok := userFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	user, err := s.users.FindByID(r.Context(), authUser.ID)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "user no longer exists")
+		return
+	}
+	s.issueLiveSession(w, r, user, false)
+}
+
+// issueLiveSession replaces the user's sole live session, sets the auth
+// cookie, and kicks every other SSE connection for this account.
+func (s *Server) issueLiveSession(w http.ResponseWriter, r *http.Request, user *UserRecord, returnBearer bool) {
+	token, jti, expires, err := s.tokens.Issue(user.Auth())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "could not issue token")
 		return
+	}
+	if err := s.users.ReplaceActiveSession(r.Context(), user.ID, jti); err != nil {
+		log.Printf("replace active session: %v", err)
+		writeError(w, http.StatusInternalServerError, "could not issue token")
+		return
+	}
+	if s.hub != nil {
+		s.hub.BroadcastToUser(user.ID, RealtimeEvent{
+			Type:   EvtAuthSessionReplaced,
+			UserID: user.ID,
+		})
+		s.hub.DropUserExcept(user.ID, jti)
 	}
 
 	s.authCookie.set(w, token, expires)
@@ -106,10 +144,11 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	resp := AuthResponse{
 		ExpiresAt: expires,
 		User:      user.Public(),
+		SessionID: jti,
 	}
 	// Keep Bearer token in the body for loadtest/CLI; browsers ignore it and
 	// use the HttpOnly cookie instead.
-	if strings.EqualFold(envOr("LOGIN_RETURN_TOKEN", "true"), "true") {
+	if returnBearer && strings.EqualFold(envOr("LOGIN_RETURN_TOKEN", "true"), "true") {
 		resp.Token = token
 	}
 	writeJSON(w, http.StatusOK, resp)
@@ -119,6 +158,31 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
+	}
+	token := s.accessToken(r)
+	presented := clientPresentedSessionID(r)
+	if token != "" {
+		if claims, err := s.tokens.Parse(token); err == nil {
+			// Stale tabs share the cookie after a newer login. Only the tab
+			// that owns this JWT (matching sid) may clear the live session.
+			ownsSession := presented != "" && presented == claims.SessionID
+			fromBearer := strings.HasPrefix(strings.ToLower(strings.TrimSpace(r.Header.Get("Authorization"))), "bearer ")
+			if !ownsSession && presented == "" && fromBearer {
+				ownsSession = true
+			}
+			if ownsSession && claims.SessionID != "" {
+				if err := s.users.ClearActiveSessionIfCurrent(r.Context(), claims.ID, claims.SessionID); err != nil {
+					log.Printf("clear active session: %v", err)
+				}
+				if s.hub != nil {
+					s.hub.DropUser(claims.ID)
+				}
+			}
+			if !ownsSession {
+				writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+				return
+			}
+		}
 	}
 	s.authCookie.clear(w)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})

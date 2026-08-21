@@ -117,6 +117,9 @@ func TestLeadScopeWhereAppliesPresetWithoutStatus(t *testing.T) {
 	if !strings.Contains(joined, "QUALIFIED_CALL") {
 		t.Fatalf("qualified args missing QUALIFIED_CALL: %#v", args)
 	}
+	if !strings.Contains(joined, "PAID") || !strings.Contains(joined, "ORGANIC") {
+		t.Fatalf("qualified args missing PAID/ORGANIC: %#v", args)
+	}
 }
 
 func TestLeadScopeWhereAnalystTeamLead(t *testing.T) {

@@ -170,23 +170,6 @@ func humanizeEnum(value string) string {
 	return strings.Join(parts, " ")
 }
 
-// qualificationDisplay matches lead_flow_ui QUALIFICATION_OPTIONS labels.
-func qualificationDisplay(status string) string {
-	switch status {
-	case "QUALIFIED":
-		return "Qualified"
-	case "QUALIFIED_CHAT":
-		return "Qualified - Chat"
-	case "QUALIFIED_CALL":
-		return "Qualified - Call"
-	case "NOT_QUALIFIED":
-		return "Not Qualified"
-	case "IRRELEVANT":
-		return "Irrelevant"
-	default:
-		return humanizeEnum(status)
-	}
-}
 
 // salesStageDisplay matches lead_flow_ui LEAD_STAGE_OPTIONS labels.
 func salesStageDisplay(stage string) string {
@@ -443,9 +426,7 @@ func appendLeadFilter(where *[]string, args *[]any, filter string) {
 		*args = append(*args, "NOT_QUALIFIED")
 		*where = append(*where, fmt.Sprintf(`l."qualificationStatus" = $%d`, len(*args)))
 	case "qualified":
-		*args = append(*args, "QUALIFIED", "QUALIFIED_CALL", "QUALIFIED_CHAT")
-		n := len(*args)
-		*where = append(*where, fmt.Sprintf(`l."qualificationStatus" IN ($%d, $%d, $%d)`, n-2, n-1, n))
+		appendQualifiedStatuses(where, args)
 	case "irrelevant":
 		*args = append(*args, "IRRELEVANT")
 		*where = append(*where, fmt.Sprintf(`l."qualificationStatus" = $%d`, len(*args)))
@@ -524,9 +505,16 @@ func appendLeadFilter(where *[]string, args *[]any, filter string) {
 }
 
 func appendQualifiedStatuses(where *[]string, args *[]any) {
-	*args = append(*args, "QUALIFIED", "QUALIFIED_CALL", "QUALIFIED_CHAT")
-	n := len(*args)
-	*where = append(*where, fmt.Sprintf(`l."qualificationStatus" IN ($%d, $%d, $%d)`, n-2, n-1, n))
+	if len(assignableQualificationCodes) == 0 {
+		return
+	}
+	start := len(*args) + 1
+	placeholders := make([]string, len(assignableQualificationCodes))
+	for i, code := range assignableQualificationCodes {
+		*args = append(*args, code)
+		placeholders[i] = fmt.Sprintf("$%d", start+i)
+	}
+	*where = append(*where, `l."qualificationStatus" IN (`+strings.Join(placeholders, ", ")+`)`)
 }
 
 // escapeILIKE escapes \, %, and _ so user input is matched literally.
@@ -1342,7 +1330,7 @@ func (s *LeadStore) Summary(ctx context.Context, params LeadListParams) (LeadSum
 			COUNT(*)::bigint,
 			COUNT(*) FILTER (WHERE l."qualificationStatus" = 'IRRELEVANT')::bigint,
 			COUNT(*) FILTER (
-				WHERE l."qualificationStatus" IN ('QUALIFIED', 'QUALIFIED_CALL', 'QUALIFIED_CHAT')
+				WHERE l."qualificationStatus" IN ('QUALIFIED', 'QUALIFIED_CHAT', 'QUALIFIED_CALL', 'PAID', 'ORGANIC')
 			)::bigint,
 			COUNT(*) FILTER (WHERE l."qualificationStatus" = 'NOT_QUALIFIED')::bigint,
 			COUNT(*) FILTER (WHERE l."salesStage" = 'CLOSED_LOST')::bigint,
@@ -1363,11 +1351,11 @@ func (s *LeadStore) Summary(ctx context.Context, params LeadListParams) (LeadSum
 			COUNT(*) FILTER (WHERE l."createdAt" > NOW() - INTERVAL '7 days')::bigint,
 			COUNT(*) FILTER (
 				WHERE l."salesStage" = 'WITH_TEAM_LEAD'
-				  AND l."qualificationStatus" IN ('QUALIFIED', 'QUALIFIED_CALL', 'QUALIFIED_CHAT')
+				  AND l."qualificationStatus" IN ('QUALIFIED', 'QUALIFIED_CHAT', 'QUALIFIED_CALL', 'PAID', 'ORGANIC')
 			)::bigint,
 			COUNT(*) FILTER (
 				WHERE l."salesStage" = 'WITH_EXECUTIVE'
-				  AND l."qualificationStatus" IN ('QUALIFIED', 'QUALIFIED_CALL', 'QUALIFIED_CHAT')
+				  AND l."qualificationStatus" IN ('QUALIFIED', 'QUALIFIED_CHAT', 'QUALIFIED_CALL', 'PAID', 'ORGANIC')
 			)::bigint
 		FROM "Lead" l `+leadWhere, leadArgs...).Scan(
 		&out.LeadsTotal,
@@ -1676,7 +1664,7 @@ func (s *LeadStore) analystLeadStats(ctx context.Context, filter GeoFilter) ([]A
 			COALESCE(NULLIF(BTRIM(u.email), ''), '—') AS analyst_email,
 			COUNT(*)::int AS total,
 			COUNT(*) FILTER (
-				WHERE l."qualificationStatus" IN ('QUALIFIED', 'QUALIFIED_CALL', 'QUALIFIED_CHAT')
+				WHERE l."qualificationStatus" IN ('QUALIFIED', 'QUALIFIED_CHAT', 'QUALIFIED_CALL', 'PAID', 'ORGANIC')
 			)::int AS qualified,
 			COUNT(*) FILTER (WHERE l."qualificationStatus" = 'NOT_QUALIFIED')::int AS not_qualified,
 			COUNT(*) FILTER (WHERE l."qualificationStatus" = 'IRRELEVANT')::int AS irrelevant
@@ -2023,7 +2011,7 @@ func (s *LeadStore) paginatedAnalystLeadStats(
 			COALESCE(NULLIF(BTRIM(u.email), ''), '—') AS analyst_email,
 			COUNT(*)::int AS total,
 			COUNT(*) FILTER (
-				WHERE l."qualificationStatus" IN ('QUALIFIED', 'QUALIFIED_CALL', 'QUALIFIED_CHAT')
+				WHERE l."qualificationStatus" IN ('QUALIFIED', 'QUALIFIED_CHAT', 'QUALIFIED_CALL', 'PAID', 'ORGANIC')
 			)::int AS qualified,
 			COUNT(*) FILTER (WHERE l."qualificationStatus" = 'NOT_QUALIFIED')::int AS not_qualified,
 			COUNT(*) FILTER (WHERE l."qualificationStatus" = 'IRRELEVANT')::int AS irrelevant
@@ -2183,22 +2171,6 @@ var allowedLeadSources = map[string]struct{}{
 	"Google LeadForm":         {},
 }
 
-var allowedQualifications = map[string]struct{}{
-	"QUALIFIED":      {},
-	"QUALIFIED_CHAT": {},
-	"QUALIFIED_CALL": {},
-	"NOT_QUALIFIED":  {},
-	"IRRELEVANT":     {},
-}
-
-func isAssignableQualification(status string) bool {
-	switch strings.TrimSpace(status) {
-	case "QUALIFIED", "QUALIFIED_CHAT", "QUALIFIED_CALL":
-		return true
-	default:
-		return false
-	}
-}
 
 func (s *LeadStore) UpdateQualificationStatus(ctx context.Context, id, status, actorID string) (string, error) {
 	id = strings.TrimSpace(id)
@@ -2206,7 +2178,7 @@ func (s *LeadStore) UpdateQualificationStatus(ctx context.Context, id, status, a
 	if id == "" {
 		return "", fmt.Errorf("lead id is required")
 	}
-	if _, ok := allowedQualifications[status]; !ok {
+	if !isAllowedQualification(status) {
 		return "", fmt.Errorf("invalid qualification status")
 	}
 
@@ -2434,7 +2406,7 @@ func (s *LeadStore) Create(ctx context.Context, in CreateLeadInput) (string, err
 	if _, ok := allowedLeadSources[in.Source]; !ok {
 		return "", fmt.Errorf("invalid source")
 	}
-	if _, ok := allowedQualifications[in.QualificationStatus]; !ok {
+	if !isAllowedQualification(in.QualificationStatus) {
 		return "", fmt.Errorf("invalid qualification status")
 	}
 	if in.LeadScore != nil && (*in.LeadScore < 0 || *in.LeadScore > 100) {
@@ -2999,7 +2971,7 @@ func (s *LeadStore) Update(ctx context.Context, id string, in CreateLeadInput) e
 	if _, ok := allowedLeadSources[in.Source]; !ok && in.Source != currentSource {
 		return fmt.Errorf("invalid source")
 	}
-	if _, ok := allowedQualifications[in.QualificationStatus]; !ok && in.QualificationStatus != currentQual {
+	if !isAllowedQualification(in.QualificationStatus) && in.QualificationStatus != currentQual {
 		return fmt.Errorf("invalid qualification status")
 	}
 	if in.LeadScore != nil && (*in.LeadScore < 0 || *in.LeadScore > 100) {

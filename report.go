@@ -111,7 +111,7 @@ const serviceLineSQL = `
 
 const reportAggColumns = `
 	COUNT(*)::int,
-	COUNT(*) FILTER (WHERE l."qualificationStatus" IN ('QUALIFIED','QUALIFIED_CALL','QUALIFIED_CHAT'))::int,
+	COUNT(*) FILTER (WHERE l."qualificationStatus" IN ('QUALIFIED','QUALIFIED_CHAT','QUALIFIED_CALL','PAID','ORGANIC'))::int,
 	COUNT(*) FILTER (WHERE l."qualificationStatus" = 'NOT_QUALIFIED')::int,
 	COUNT(*) FILTER (WHERE l."qualificationStatus" = 'IRRELEVANT')::int,
 	COUNT(*) FILTER (WHERE l."salesStage" = 'CLOSED_WON')::int,
@@ -486,7 +486,7 @@ func (s *LeadStore) Report(ctx context.Context, params LeadListParams) (ReportRe
 	sourceDim := `COALESCE(NULLIF(BTRIM(l.source), ''), 'none')`
 	portalDim := `COALESCE(NULLIF(BTRIM(l."portalWebsite"), ''), 'No portal recorded')`
 
-	qualFilter := `COUNT(*) FILTER (WHERE l."qualificationStatus" IN ('QUALIFIED','QUALIFIED_CALL','QUALIFIED_CHAT'))`
+	qualFilter := `COUNT(*) FILTER (WHERE l."qualificationStatus" IN ('QUALIFIED','QUALIFIED_CHAT','QUALIFIED_CALL','PAID','ORGANIC'))`
 	irrelFilter := `COUNT(*) FILTER (WHERE l."qualificationStatus" = 'IRRELEVANT')`
 	namedCountry := `LOWER(COALESCE(NULLIF(BTRIM(MIN(l.country)), ''), '')) NOT IN ('', 'unknown')`
 	namedCity := `LOWER(COALESCE(NULLIF(BTRIM(MIN(l.city)), ''), '')) NOT IN ('', 'unknown')`
@@ -545,7 +545,7 @@ func (s *LeadStore) Report(ctx context.Context, params LeadListParams) (ReportRe
 			to_char(date_trunc('month', timezone('Asia/Kathmandu', l."createdAt"))::date, 'YYYY-MM') AS key,
 			to_char(date_trunc('month', timezone('Asia/Kathmandu', l."createdAt"))::date, 'Mon YYYY') AS label,
 			COUNT(*)::int,
-			COUNT(*) FILTER (WHERE l."qualificationStatus" IN ('QUALIFIED','QUALIFIED_CALL','QUALIFIED_CHAT'))::int,
+			COUNT(*) FILTER (WHERE l."qualificationStatus" IN ('QUALIFIED','QUALIFIED_CHAT','QUALIFIED_CALL','PAID','ORGANIC'))::int,
 			COUNT(*) FILTER (WHERE l."salesStage" = 'CLOSED_WON')::int
 		FROM "Lead" l
 		` + trendWhere + `
@@ -796,7 +796,7 @@ func (s *LeadStore) reportKeywordDemand(
 		err := s.pool.QueryRow(ctx, fmt.Sprintf(`
 			SELECT
 				COUNT(*)::int,
-				COUNT(*) FILTER (WHERE l."qualificationStatus" IN ('QUALIFIED','QUALIFIED_CALL','QUALIFIED_CHAT'))::int,
+				COUNT(*) FILTER (WHERE l."qualificationStatus" IN ('QUALIFIED','QUALIFIED_CHAT','QUALIFIED_CALL','PAID','ORGANIC'))::int,
 				COUNT(*) FILTER (WHERE l."salesStage" = 'CLOSED_WON')::int,
 				COALESCE(SUM(l."closedRevenue") FILTER (WHERE l."salesStage" = 'CLOSED_WON'), 0)::float8
 			FROM "Lead" l

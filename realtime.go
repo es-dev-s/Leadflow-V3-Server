@@ -24,6 +24,7 @@ const (
 	EvtPresenceOnline  = "presence.online"
 	EvtPresenceOffline = "presence.offline"
 	EvtPresenceSync    = "presence.sync"
+	EvtAuthSessionReplaced = "auth.session_replaced"
 )
 
 // PresenceInfo is one live dashboard session (unique user).
@@ -52,6 +53,7 @@ type sseClient struct {
 	userID string
 	role   string
 	teamID string
+	sid    string
 	ch     chan []byte
 }
 
@@ -199,6 +201,68 @@ func (h *RealtimeHub) Broadcast(evt RealtimeEvent) {
 	h.mu.RUnlock()
 }
 
+// BroadcastToUser delivers to every live SSE connection for this user.
+func (h *RealtimeHub) BroadcastToUser(userID string, evt RealtimeEvent) {
+	if h == nil {
+		return
+	}
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return
+	}
+	if evt.At == 0 {
+		evt.At = time.Now().UnixMilli()
+	}
+	payload, err := json.Marshal(evt)
+	if err != nil {
+		return
+	}
+	h.mu.RLock()
+	for _, c := range h.clients {
+		if c.userID != userID {
+			continue
+		}
+		select {
+		case c.ch <- payload:
+		default:
+		}
+	}
+	h.mu.RUnlock()
+}
+
+// DropUser closes every SSE connection for this user.
+func (h *RealtimeHub) DropUser(userID string) {
+	h.DropUserExcept(userID, "")
+}
+
+// DropUserExcept closes this user's SSE connections except keepSID (the new
+// live session). Other accounts are never touched.
+func (h *RealtimeHub) DropUserExcept(userID, keepSID string) {
+	if h == nil {
+		return
+	}
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return
+	}
+	keepSID = strings.TrimSpace(keepSID)
+	h.mu.RLock()
+	ids := make([]string, 0, 4)
+	for id, c := range h.clients {
+		if c.userID != userID {
+			continue
+		}
+		if keepSID != "" && c.sid == keepSID {
+			continue
+		}
+		ids = append(ids, id)
+	}
+	h.mu.RUnlock()
+	for _, id := range ids {
+		h.remove(id)
+	}
+}
+
 // emitLead is a convenience broadcaster used by lead mutation handlers.
 // Any lead mutation also invalidates cached aggregates so clients never see
 // stale summaries after a change.
@@ -232,28 +296,9 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token := s.accessToken(r)
-	if token == "" {
-		writeError(w, http.StatusUnauthorized, "authentication required")
-		return
-	}
-	claimsUser, err := s.tokens.Parse(token)
-	if err != nil {
-		writeError(w, http.StatusUnauthorized, "authentication required")
-		return
-	}
-	// Match requireAuth: deleted / deactivated / role-changed users drop off.
-	dbUser, err := s.users.FindByID(r.Context(), claimsUser.ID)
-	if err != nil {
-		writeError(w, http.StatusUnauthorized, "authentication required")
-		return
-	}
-	if !dbUser.IsActive {
-		writeError(w, http.StatusForbidden, "account is inactive")
-		return
-	}
-	if !isValidRole(dbUser.Role) {
-		writeError(w, http.StatusForbidden, "account role is invalid")
+	dbUser, claimsUser, status, msg := s.loadAuthedUser(r)
+	if status != 0 {
+		writeError(w, status, msg)
 		return
 	}
 
@@ -284,6 +329,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		userID: dbUser.ID,
 		role:   dbUser.Role,
 		teamID: teamID,
+		sid:    claimsUser.SessionID,
 		ch:     make(chan []byte, 64),
 	}
 	total, first := s.hub.add(client)

@@ -115,6 +115,7 @@ func main() {
 
 	// Authenticated — cookie (browser) or Authorization Bearer (API clients).
 	mux.HandleFunc("/api/auth/me", server.requireAuth(server.handleMe))
+	mux.HandleFunc("/api/auth/session/claim", server.requireAuth(server.handleClaimSession))
 	mux.HandleFunc("/api/roles", server.requireAuth(server.handleRoles))
 	mux.HandleFunc("/api/users", server.requireAuth(server.handleUsers))
 	mux.HandleFunc("/api/users/", server.requireAuth(server.handleUserByID))

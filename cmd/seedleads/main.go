@@ -352,6 +352,7 @@ var (
 	}
 	quals = []string{
 		"QUALIFIED", "QUALIFIED_CHAT", "QUALIFIED_CALL",
+		"PAID", "ORGANIC",
 		"NOT_QUALIFIED", "IRRELEVANT",
 	}
 	// Weighted via pickQual.
@@ -379,15 +380,19 @@ var (
 )
 
 func pickQual(rng *rand.Rand) string {
-	// ~60% assignable / qualified family, rest NQ/IR.
-	switch rng.Intn(10) {
+	// ~60% assignable / qualified family (incl. paid / organic), rest NQ/IR.
+	switch rng.Intn(12) {
 	case 0, 1, 2, 3:
 		return "QUALIFIED"
 	case 4, 5:
 		return "QUALIFIED_CHAT"
 	case 6:
 		return "QUALIFIED_CALL"
-	case 7, 8:
+	case 7:
+		return "PAID"
+	case 8:
+		return "ORGANIC"
+	case 9, 10:
 		return "NOT_QUALIFIED"
 	default:
 		return "IRRELEVANT"
@@ -395,7 +400,12 @@ func pickQual(rng *rand.Rand) string {
 }
 
 func isAssignable(q string) bool {
-	return q == "QUALIFIED" || q == "QUALIFIED_CHAT" || q == "QUALIFIED_CALL"
+	switch q {
+	case "QUALIFIED", "QUALIFIED_CHAT", "QUALIFIED_CALL", "PAID", "ORGANIC":
+		return true
+	default:
+		return false
+	}
 }
 
 func buildLeadRow(

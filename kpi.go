@@ -60,14 +60,14 @@ func (s *LeadStore) KPI(ctx context.Context, params LeadListParams, teamHC int64
 	err = s.pool.QueryRow(ctx, `
 		SELECT
 			COUNT(*) FILTER (
-				WHERE l."qualificationStatus" IN ('QUALIFIED', 'QUALIFIED_CALL', 'QUALIFIED_CHAT')
+				WHERE l."qualificationStatus" IN ('QUALIFIED', 'QUALIFIED_CHAT', 'QUALIFIED_CALL', 'PAID', 'ORGANIC')
 			)::bigint,
 			COUNT(*) FILTER (
-				WHERE l."qualificationStatus" IN ('QUALIFIED', 'QUALIFIED_CALL', 'QUALIFIED_CHAT')
+				WHERE l."qualificationStatus" IN ('QUALIFIED', 'QUALIFIED_CHAT', 'QUALIFIED_CALL', 'PAID', 'ORGANIC')
 				  AND l."salesStage" = 'CLOSED_WON'
 			)::bigint,
 			COUNT(*) FILTER (
-				WHERE l."qualificationStatus" IN ('QUALIFIED', 'QUALIFIED_CALL', 'QUALIFIED_CHAT')
+				WHERE l."qualificationStatus" IN ('QUALIFIED', 'QUALIFIED_CHAT', 'QUALIFIED_CALL', 'PAID', 'ORGANIC')
 				  AND l."salesStage" = 'CLOSED_LOST'
 			)::bigint,
 			AVG(l."leadScore") FILTER (WHERE l."leadScore" IS NOT NULL),
