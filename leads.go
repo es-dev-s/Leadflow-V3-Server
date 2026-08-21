@@ -74,12 +74,12 @@ type LeadListResponse struct {
 }
 
 type LeadListParams struct {
-	Filter   string
-	Sort     string
-	Query    string
-	Field    string // optional column scope for search
-	Cursor   string
-	Limit    int
+	Filter string
+	Sort   string
+	Query  string
+	Field  string // optional column scope for search
+	Cursor string
+	Limit  int
 
 	// Dashboard deep-link facets (exact match unless noted).
 	Country     string
@@ -93,11 +93,11 @@ type LeadListParams struct {
 	// themselves or by Lead Analysts on the same analyst team.
 	AnalystTeamLeadID string
 	AnalystTeamName   string
-	Source      string // "none" = blank/unassigned
-	Portal      string // "none" = blank/unassigned
-	MetaProfile string // "none" = blank/unassigned
-	Status      string // exact qualificationStatus
-	Stage       string // exact salesStage
+	Source            string // "none" = blank/unassigned
+	Portal            string // "none" = blank/unassigned
+	MetaProfile       string // "none" = blank/unassigned
+	Status            string // exact qualificationStatus
+	Stage             string // exact salesStage
 	// ServiceLine scopes portals to a report brand: CDR | CCL | PTE | ACS.
 	ServiceLine string
 	// Exact extracted qualification reason (from notes), matching dashboard reasons buckets.
@@ -169,7 +169,6 @@ func humanizeEnum(value string) string {
 	}
 	return strings.Join(parts, " ")
 }
-
 
 // salesStageDisplay matches lead_flow_ui LEAD_STAGE_OPTIONS labels.
 func salesStageDisplay(stage string) string {
@@ -314,15 +313,16 @@ func formatHandoff(action, detail *string) string {
 }
 
 func closedLabel(closedAt *time.Time, stage string) string {
+	switch strings.TrimSpace(stage) {
+	case "CLOSED_LOST":
+		return "Lost"
+	case "CLOSED_WON":
+		return "Closed"
+	}
 	if closedAt != nil {
 		return "Closed"
 	}
-	switch stage {
-	case "CLOSED_WON", "CLOSED_LOST":
-		return "Closed"
-	default:
-		return "Open"
-	}
+	return "Open"
 }
 
 func formatClosedAtRFC3339(closedAt *time.Time) *string {
@@ -2171,16 +2171,16 @@ var allowedLeadSources = map[string]struct{}{
 	"Google LeadForm":         {},
 }
 
-
 func (s *LeadStore) UpdateQualificationStatus(ctx context.Context, id, status, actorID string) (string, error) {
 	id = strings.TrimSpace(id)
-	status = strings.TrimSpace(status)
+	code, ok := canonicalizeQualification(status)
 	if id == "" {
 		return "", fmt.Errorf("lead id is required")
 	}
-	if !isAllowedQualification(status) {
+	if !ok {
 		return "", fmt.Errorf("invalid qualification status")
 	}
+	status = code
 
 	var current string
 	err := s.pool.QueryRow(ctx, `
@@ -2406,9 +2406,11 @@ func (s *LeadStore) Create(ctx context.Context, in CreateLeadInput) (string, err
 	if _, ok := allowedLeadSources[in.Source]; !ok {
 		return "", fmt.Errorf("invalid source")
 	}
-	if !isAllowedQualification(in.QualificationStatus) {
+	qual, ok := canonicalizeQualification(in.QualificationStatus)
+	if !ok {
 		return "", fmt.Errorf("invalid qualification status")
 	}
+	in.QualificationStatus = qual
 	if in.LeadScore != nil && (*in.LeadScore < 0 || *in.LeadScore > 100) {
 		return "", fmt.Errorf("lead score must be between 0 and 100")
 	}
@@ -2971,7 +2973,10 @@ func (s *LeadStore) Update(ctx context.Context, id string, in CreateLeadInput) e
 	if _, ok := allowedLeadSources[in.Source]; !ok && in.Source != currentSource {
 		return fmt.Errorf("invalid source")
 	}
-	if !isAllowedQualification(in.QualificationStatus) && in.QualificationStatus != currentQual {
+	qual, ok := canonicalizeQualification(in.QualificationStatus)
+	if ok {
+		in.QualificationStatus = qual
+	} else if in.QualificationStatus != currentQual {
 		return fmt.Errorf("invalid qualification status")
 	}
 	if in.LeadScore != nil && (*in.LeadScore < 0 || *in.LeadScore > 100) {

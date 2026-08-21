@@ -11,7 +11,7 @@ func normalizeSearchField(field string) string {
 		return ""
 	case "source", "portal", "lead", "analyst", "tag", "phone", "email",
 		"clientprofile", "client_profile", "location", "analystnotes", "analyst_notes",
-		"status", "score", "stage", "closed", "ip", "executivenotes", "executive_notes",
+		"status", "score", "stage", "closed", "closeddate", "closed_date", "ip", "executivenotes", "executive_notes",
 		"added", "team", "handoff", "contact", "duplicatecheck", "duplicate_check",
 		"dealvalue", "deal_value", "salesexecutive", "sales_executive":
 		return strings.ToLower(strings.ReplaceAll(strings.TrimSpace(field), "-", ""))
@@ -34,6 +34,8 @@ func canonicalSearchField(field string) string {
 		return "salesExecutive"
 	case "duplicate_check", "duplicatecheck":
 		return "duplicateCheck"
+	case "closed_date", "closeddate":
+		return "closedDate"
 	case "source", "portal", "lead", "analyst", "tag", "phone", "email",
 		"location", "status", "score", "stage", "closed", "ip", "added",
 		"team", "handoff", "contact":
@@ -140,19 +142,31 @@ func appendLeadSearch(where *[]string, args *[]any, q, field string) {
 		)`, n, n))
 	case "closed":
 		lower := strings.ToLower(q)
-		if strings.Contains(lower, "clos") {
-			*where = append(*where, `(
-				l."closedAt" IS NOT NULL
-				OR l."salesStage" IN ('CLOSED_WON', 'CLOSED_LOST')
-			)`)
+		if strings.Contains(lower, "lost") {
+			*where = append(*where, `l."salesStage" = 'CLOSED_LOST'`)
 		} else if strings.Contains(lower, "open") {
 			*where = append(*where, `(
 				l."closedAt" IS NULL
 				AND l."salesStage" NOT IN ('CLOSED_WON', 'CLOSED_LOST')
 			)`)
+		} else if strings.Contains(lower, "clos") {
+			*where = append(*where, `(
+				l."closedAt" IS NOT NULL
+				OR l."salesStage" IN ('CLOSED_WON', 'CLOSED_LOST')
+			)`)
 		} else {
 			*where = append(*where, `FALSE`)
 		}
+	case "closedDate":
+		n := patternN()
+		*where = append(*where, fmt.Sprintf(`(
+			l."closedAt" IS NOT NULL
+			AND (
+				to_char(l."closedAt", 'FMMM/FMDD/YYYY') ILIKE $%d ESCAPE '\'
+				OR to_char(l."closedAt", 'YYYY-MM-DD') ILIKE $%d ESCAPE '\'
+				OR to_char(l."closedAt", 'FMMonth FMDD, YYYY') ILIKE $%d ESCAPE '\'
+			)
+		)`, n, n, n))
 	case "ip", "duplicateCheck":
 		// No persisted values in current schema.
 		*where = append(*where, `FALSE`)

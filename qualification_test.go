@@ -14,8 +14,32 @@ func TestPaidAndOrganicAreAssignableQualified(t *testing.T) {
 			t.Fatalf("%s must count as qualified (assignable)", code)
 		}
 	}
+	for _, alias := range []string{"Paid", "paid", "Organic", "organic"} {
+		if !isAssignableQualification(alias) {
+			t.Fatalf("%q must be treated as assignable qualified", alias)
+		}
+		code, ok := canonicalizeQualification(alias)
+		if !ok {
+			t.Fatalf("%q must canonicalize", alias)
+		}
+		if code != QualPaid && code != QualOrganic {
+			t.Fatalf("%q canonicalized to %s", alias, code)
+		}
+	}
 	if isAssignableQualification(QualNotQualified) || isAssignableQualification(QualIrrelevant) {
 		t.Fatal("not-qualified / irrelevant must not be assignable")
+	}
+}
+
+func TestAssignSQLAcceptsPaidOrganicCaseInsensitive(t *testing.T) {
+	sql := sqlInAssignableQualificationFold(`"qualificationStatus"`)
+	if !strings.Contains(sql, "UPPER(BTRIM(") {
+		t.Fatalf("assign SQL must fold case: %s", sql)
+	}
+	for _, code := range []string{QualPaid, QualOrganic, QualQualifiedChat} {
+		if !strings.Contains(sql, "'"+code+"'") {
+			t.Fatalf("assign SQL missing %s: %s", code, sql)
+		}
 	}
 }
 

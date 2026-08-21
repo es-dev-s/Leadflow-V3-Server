@@ -57,8 +57,45 @@ func sqlInAssignableQualification(column string) string {
 	return column + " IN (" + sqlAssignableQualificationIN + ")"
 }
 
+func sqlInAssignableQualificationFold(column string) string {
+	return "UPPER(BTRIM(" + column + ")) IN (" + sqlAssignableQualificationIN + ")"
+}
+
+func normalizeQualification(status string) string {
+	s := strings.TrimSpace(status)
+	if s == "" {
+		return ""
+	}
+	if _, ok := allowedQualifications[s]; ok {
+		return s
+	}
+	key := strings.ToUpper(s)
+	key = strings.ReplaceAll(key, "-", "_")
+	key = strings.ReplaceAll(key, " ", "_")
+	for strings.Contains(key, "__") {
+		key = strings.ReplaceAll(key, "__", "_")
+	}
+	key = strings.Trim(key, "_")
+	if _, ok := allowedQualifications[key]; ok {
+		return key
+	}
+	for code, label := range qualificationLabels {
+		if strings.EqualFold(strings.TrimSpace(label), s) {
+			return code
+		}
+	}
+	return s
+}
+
+func canonicalizeQualification(status string) (string, bool) {
+	code := normalizeQualification(status)
+	_, ok := allowedQualifications[code]
+	return code, ok
+}
+
 func isAssignableQualification(status string) bool {
-	switch strings.TrimSpace(status) {
+	code := normalizeQualification(status)
+	switch code {
 	case QualQualified, QualQualifiedChat, QualQualifiedCall, QualPaid, QualOrganic:
 		return true
 	default:
@@ -67,13 +104,14 @@ func isAssignableQualification(status string) bool {
 }
 
 func isAllowedQualification(status string) bool {
-	_, ok := allowedQualifications[strings.TrimSpace(status)]
+	_, ok := canonicalizeQualification(status)
 	return ok
 }
 
 // qualificationDisplay matches lead_flow_ui QUALIFICATION_OPTIONS labels.
 func qualificationDisplay(status string) string {
-	if label, ok := qualificationLabels[status]; ok {
+	code := normalizeQualification(status)
+	if label, ok := qualificationLabels[code]; ok {
 		return label
 	}
 	return humanizeEnum(status)

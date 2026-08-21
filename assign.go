@@ -278,7 +278,7 @@ func (s *LeadStore) AssignLeads(ctx context.Context, in AssignLeadInput) (Assign
 					"salesStage" = 'WITH_TEAM_LEAD',
 					"updatedAt" = $4
 				WHERE id = $1
-				  AND "qualificationStatus" IN ('QUALIFIED', 'QUALIFIED_CHAT', 'QUALIFIED_CALL', 'PAID', 'ORGANIC')`,
+				  AND ` + sqlInAssignableQualificationFold(`"qualificationStatus"`),
 				leadID, in.AssigneeID, teamID, now)
 			if err != nil {
 				return empty, err
@@ -309,7 +309,7 @@ func (s *LeadStore) AssignLeads(ctx context.Context, in AssignLeadInput) (Assign
 					END,
 					"updatedAt" = $5
 				WHERE id = $1
-				  AND "qualificationStatus" IN ('QUALIFIED', 'QUALIFIED_CHAT', 'QUALIFIED_CALL', 'PAID', 'ORGANIC')`,
+				  AND ` + sqlInAssignableQualificationFold(`"qualificationStatus"`),
 				leadID, in.AssigneeID, teamID, mainTeamLeadID, now,
 			)
 			if err != nil {

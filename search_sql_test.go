@@ -187,6 +187,34 @@ func TestLeadScopeWhereSkipsPresetWhenStatusSet(t *testing.T) {
 	}
 }
 
+func TestClosedDateSearchUsesClosedAt(t *testing.T) {
+	where, args := buildLeadListWhere(LeadListParams{
+		Filter: "all",
+		Query:  "2026-08-21",
+		Field:  "closedDate",
+	}, 0)
+	sql := strings.Join(where, " AND ")
+	if !strings.Contains(sql, `l."closedAt"`) {
+		t.Fatalf("closedDate search must use closedAt: %s", sql)
+	}
+	if len(args) == 0 {
+		t.Fatalf("expected date pattern arg")
+	}
+}
+
+func TestClosedLabelWonLostOpen(t *testing.T) {
+	now := time.Now()
+	if got := closedLabel(&now, "CLOSED_LOST"); got != "Lost" {
+		t.Fatalf("lost: %q", got)
+	}
+	if got := closedLabel(&now, "CLOSED_WON"); got != "Closed" {
+		t.Fatalf("won: %q", got)
+	}
+	if got := closedLabel(nil, "CONTACTED"); got != "Open" {
+		t.Fatalf("open: %q", got)
+	}
+}
+
 func TestQuoteTimeZoneNameRejectsInjection(t *testing.T) {
 	if got := quoteTimeZoneName("Asia/Kathmandu'; DROP TABLE"); got != defaultBusinessTZ {
 		t.Fatalf("expected fallback, got %q", got)
