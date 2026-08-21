@@ -3,6 +3,7 @@ package main
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestGlobalSearchSQLHasNoFmtExtra(t *testing.T) {
@@ -46,15 +47,34 @@ func TestTagSearchNotAppropriateAndIrrelevant(t *testing.T) {
 func TestAddedDateUsesBusinessCalendar(t *testing.T) {
 	where, args := buildLeadListWhere(LeadListParams{
 		Filter:    "all",
-		AddedFrom: "2026-08-19",
-		AddedTo:   "2026-08-19",
+		AddedFrom: "2026-08-20",
+		AddedTo:   "2026-08-21",
 	}, 0)
 	sql := strings.Join(where, " AND ")
-	if !strings.Contains(sql, "AT TIME ZONE") {
-		t.Fatalf("date filter must use business timezone: %s", sql)
+	if !strings.Contains(sql, `l."createdAt" >=`) {
+		t.Fatalf("from date must be inclusive: %s", sql)
+	}
+	if !strings.Contains(sql, `l."createdAt" <`) {
+		t.Fatalf("to date must be exclusive-end (inclusive calendar day): %s", sql)
 	}
 	if len(args) < 2 {
-		t.Fatalf("expected tz + date args, got %#v", args)
+		t.Fatalf("expected from+to instant args, got %#v", args)
+	}
+	from, ok := args[0].(time.Time)
+	if !ok {
+		t.Fatalf("from arg should be time.Time, got %#v", args[0])
+	}
+	to, ok := args[1].(time.Time)
+	if !ok {
+		t.Fatalf("to arg should be time.Time, got %#v", args[1])
+	}
+	// 2026-08-20 00:00 Asia/Kathmandu == 2026-08-19 18:15 UTC
+	if from.UTC().Format("2006-01-02 15:04") != "2026-08-19 18:15" {
+		t.Fatalf("from should be Kathmandu midnight: %s", from.UTC())
+	}
+	// Exclusive end is the next calendar day 00:00 NPT (2026-08-22 00:00 NPT)
+	if to.UTC().Format("2006-01-02 15:04") != "2026-08-21 18:15" {
+		t.Fatalf("to exclusive-end should be next Kathmandu midnight: %s", to.UTC())
 	}
 }
 

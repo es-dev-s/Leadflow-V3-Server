@@ -232,6 +232,24 @@ func formatLeadCreatedAt(t time.Time) string {
 	return t.In(businessLocation()).Format("2006-01-02")
 }
 
+// parseLeadAddedDay reads a YYYY-MM-DD (optionally followed by a time) as a
+// business-timezone calendar day at local midnight.
+func parseLeadAddedDay(raw string) (time.Time, bool) {
+	raw = strings.TrimSpace(raw)
+	if len(raw) < 10 {
+		return time.Time{}, false
+	}
+	day, err := time.ParseInLocation("2006-01-02", raw[:10], businessLocation())
+	if err != nil {
+		return time.Time{}, false
+	}
+	y, m, d := day.Date()
+	if y < 1990 || y > 2100 {
+		return time.Time{}, false
+	}
+	return time.Date(y, m, d, 0, 0, 0, 0, businessLocation()), true
+}
+
 func formatDealValue(value *float64, currency string) string {
 	if value == nil {
 		return "—"
@@ -610,30 +628,21 @@ func appendLeadFacets(where *[]string, args *[]any, params LeadListParams) {
 
 	from := strings.TrimSpace(params.AddedFrom)
 	to := strings.TrimSpace(params.AddedTo)
-	if from != "" && to != "" && from > to {
-		from, to = to, from
+	fromDay, fromOK := parseLeadAddedDay(from)
+	toDay, toOK := parseLeadAddedDay(to)
+	if fromOK && toOK && fromDay.After(toDay) {
+		fromDay, toDay = toDay, fromDay
 	}
-	tz := businessLocation().String()
-	if from != "" {
-		if _, err := time.Parse("2006-01-02", from); err == nil {
-			*args = append(*args, tz, from)
-			n := len(*args)
-			// createdAt is stored as UTC wall-clock in timestamp-without-tz.
-			*where = append(*where, fmt.Sprintf(
-				`((l."createdAt" AT TIME ZONE 'UTC') AT TIME ZONE $%d)::date >= $%d::date`,
-				n-1, n,
-			))
-		}
+	// Inclusive calendar days in the business timezone (Asia/Kathmandu):
+	// [from 00:00, to 00:00 + 1 day). Comparing UTC instants matches how
+	// createdAt is stored and how the Added column is displayed.
+	if fromOK {
+		*args = append(*args, fromDay.UTC())
+		*where = append(*where, fmt.Sprintf(`l."createdAt" >= $%d`, len(*args)))
 	}
-	if to != "" {
-		if _, err := time.Parse("2006-01-02", to); err == nil {
-			*args = append(*args, tz, to)
-			n := len(*args)
-			*where = append(*where, fmt.Sprintf(
-				`((l."createdAt" AT TIME ZONE 'UTC') AT TIME ZONE $%d)::date <= $%d::date`,
-				n-1, n,
-			))
-		}
+	if toOK {
+		*args = append(*args, toDay.AddDate(0, 0, 1).UTC())
+		*where = append(*where, fmt.Sprintf(`l."createdAt" < $%d`, len(*args)))
 	}
 
 	appendQualificationReasonFacet(where, args, params.QualificationReason)
