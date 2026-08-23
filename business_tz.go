@@ -50,8 +50,10 @@ func businessLocation() *time.Location {
 	return businessLoc
 }
 
-// createdAtBusinessDateSQL is the same calendar-day expression as list date filters:
-// createdAt stored as UTC wall-clock timestamp without time zone.
+// createdAtBusinessDateSQL is the Kathmandu calendar day of createdAt — the
+// same day the leads list uses. Do not wrap AT TIME ZONE 'UTC' first: date-
+// picker values are stored at KTM midnight (UTC 18:15 the previous day) and
+// that extra conversion puts them on the prior graph day.
 func businessTZName() string {
 	name := quoteTimeZoneName(businessLocation().String())
 	if name == "Local" {
@@ -62,7 +64,13 @@ func businessTZName() string {
 
 func createdAtBusinessDateSQL() string {
 	tz := businessTZName()
-	return `((l."createdAt" AT TIME ZONE 'UTC') AT TIME ZONE '` + tz + `')::date`
+	return `(l."createdAt" AT TIME ZONE '` + tz + `')::date`
+}
+
+func leadCreatedAtInBusinessDateRangeSQL(startDateExpr, endExclusiveDateExpr string) string {
+	tz := businessTZName()
+	return `l."createdAt" >= (` + startDateExpr + `::timestamp AT TIME ZONE '` + tz + `')` +
+		` AND l."createdAt" < (` + endExclusiveDateExpr + `::timestamp AT TIME ZONE '` + tz + `')`
 }
 
 func currentBusinessDateSQL() string {

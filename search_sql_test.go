@@ -44,6 +44,20 @@ func TestTagSearchNotAppropriateAndIrrelevant(t *testing.T) {
 	}
 }
 
+func TestCreatedAtBusinessDateIsListCalendarDay(t *testing.T) {
+	sql := createdAtBusinessDateSQL()
+	if strings.Contains(sql, `AT TIME ZONE 'UTC'`) {
+		t.Fatalf("UTC wrap shifts KTM midnight leads back one graph day: %s", sql)
+	}
+	if !strings.Contains(sql, `AT TIME ZONE 'Asia/Kathmandu'`) {
+		t.Fatalf("expected business TZ calendar day: %s", sql)
+	}
+	rangeSQL := leadCreatedAtInBusinessDateRangeSQL("d.bucket", "(d.bucket + INTERVAL '1 day')")
+	if !strings.Contains(rangeSQL, `l."createdAt" >=`) || !strings.Contains(rangeSQL, `l."createdAt" <`) {
+		t.Fatalf("series must use the same createdAt window as the list: %s", rangeSQL)
+	}
+}
+
 func TestAddedDateUsesBusinessCalendar(t *testing.T) {
 	where, args := buildLeadListWhere(LeadListParams{
 		Filter:    "all",

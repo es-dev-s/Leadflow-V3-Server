@@ -1465,7 +1465,6 @@ func (s *LeadStore) AddedSeries(ctx context.Context, granularity string, params 
 	}
 
 	scopeAnd, scopeArgs := leadScopeAndSQL(params)
-	dayExpr := createdAtBusinessDateSQL()
 	todayExpr := currentBusinessDateSQL()
 
 	var (
@@ -1489,12 +1488,13 @@ func (s *LeadStore) AddedSeries(ctx context.Context, granularity string, params 
 				)::date AS bucket
 			),
 			counts AS (
-				SELECT date_trunc('month', ` + dayExpr + `)::date AS bucket, COUNT(*)::int AS cnt
-				FROM "Lead" l
-				CROSS JOIN bounds b
-				WHERE ` + dayExpr + ` >= b.start_month
-				  AND ` + dayExpr + ` < (b.end_month + INTERVAL '1 month')` + scopeAnd + `
-				GROUP BY 1
+				SELECT m.bucket, COUNT(l.id)::int AS cnt
+				FROM months m
+				INNER JOIN "Lead" l ON ` + leadCreatedAtInBusinessDateRangeSQL(
+			`m.bucket`,
+			`(m.bucket + INTERVAL '1 month')`,
+		) + scopeAnd + `
+				GROUP BY m.bucket
 			)
 			SELECT
 				to_char(m.bucket, 'YYYY-MM') AS key,
@@ -1518,12 +1518,13 @@ func (s *LeadStore) AddedSeries(ctx context.Context, granularity string, params 
 				)::date AS bucket
 			),
 			counts AS (
-				SELECT ` + dayExpr + ` AS bucket, COUNT(*)::int AS cnt
-				FROM "Lead" l
-				CROSS JOIN bounds b
-				WHERE ` + dayExpr + ` >= b.start_day
-				  AND ` + dayExpr + ` <= b.end_day` + scopeAnd + `
-				GROUP BY 1
+				SELECT d.bucket, COUNT(l.id)::int AS cnt
+				FROM days d
+				INNER JOIN "Lead" l ON ` + leadCreatedAtInBusinessDateRangeSQL(
+			`d.bucket`,
+			`(d.bucket + INTERVAL '1 day')`,
+		) + scopeAnd + `
+				GROUP BY d.bucket
 			)
 			SELECT
 				to_char(d.bucket, 'YYYY-MM-DD') AS key,
