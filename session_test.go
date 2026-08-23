@@ -36,6 +36,33 @@ func TestSessionMatchesHash(t *testing.T) {
 	}
 }
 
+func TestLogoutActionStaleTabVsLiveVsElsewhere(t *testing.T) {
+	clearLive, clearCookie := logoutAction("old-sid", "new-sid", true)
+	if clearLive || clearCookie {
+		t.Fatal("stale tab sharing a newer cookie must not clear the live session")
+	}
+
+	clearLive, clearCookie = logoutAction("live-sid", "live-sid", true)
+	if !clearLive || !clearCookie {
+		t.Fatal("live tab logout must clear cookie and server session")
+	}
+
+	clearLive, clearCookie = logoutAction("", "live-sid", true)
+	if !clearLive || !clearCookie {
+		t.Fatal("live cookie without a tab sid must still be able to log out")
+	}
+
+	clearLive, clearCookie = logoutAction("old-sid", "old-sid", false)
+	if clearLive || clearCookie {
+		t.Fatal("stale JWT logout must not wipe a newer cookie in the same jar")
+	}
+
+	clearLive, clearCookie = logoutAction("", "old-sid", false)
+	if clearLive || clearCookie {
+		t.Fatal("in-flight logout after a newer login must not clear the live cookie")
+	}
+}
+
 func TestTokenJTIRoundTrip(t *testing.T) {
 	tokens := NewTokenService("test-secret-for-session", time.Hour)
 	user := AuthUser{ID: "id-1", Email: "a@demo.local", Name: "A", Role: RoleSuperadmin}

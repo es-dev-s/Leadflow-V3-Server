@@ -133,8 +133,9 @@ func (s *Server) issueLiveSession(w http.ResponseWriter, r *http.Request, user *
 	}
 	if s.hub != nil {
 		s.hub.BroadcastToUser(user.ID, RealtimeEvent{
-			Type:   EvtAuthSessionReplaced,
-			UserID: user.ID,
+			Type:      EvtAuthSessionReplaced,
+			UserID:    user.ID,
+			SessionID: jti,
 		})
 		s.hub.DropUserExcept(user.ID, jti)
 	}
@@ -161,30 +162,32 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	}
 	token := s.accessToken(r)
 	presented := clientPresentedSessionID(r)
-	if token != "" {
-		if claims, err := s.tokens.Parse(token); err == nil {
-			// Stale tabs share the cookie after a newer login. Only the tab
-			// that owns this JWT (matching sid) may clear the live session.
-			ownsSession := presented != "" && presented == claims.SessionID
-			fromBearer := strings.HasPrefix(strings.ToLower(strings.TrimSpace(r.Header.Get("Authorization"))), "bearer ")
-			if !ownsSession && presented == "" && fromBearer {
-				ownsSession = true
-			}
-			if ownsSession && claims.SessionID != "" {
-				if err := s.users.ClearActiveSessionIfCurrent(r.Context(), claims.ID, claims.SessionID); err != nil {
-					log.Printf("clear active session: %v", err)
-				}
-				if s.hub != nil {
-					s.hub.DropUser(claims.ID)
-				}
-			}
-			if !ownsSession {
-				writeJSON(w, http.StatusOK, map[string]any{"ok": true})
-				return
-			}
+	if token == "" {
+		s.authCookie.clear(w)
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+		return
+	}
+	claims, err := s.tokens.Parse(token)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+		return
+	}
+	jwtIsLive := false
+	if dbUser, findErr := s.users.FindByID(r.Context(), claims.ID); findErr == nil {
+		jwtIsLive = dbUser.sessionMatches(claims.SessionID)
+	}
+	clearLive, clearCookie := logoutAction(presented, claims.SessionID, jwtIsLive)
+	if clearLive && claims.SessionID != "" {
+		if err := s.users.ClearActiveSessionIfCurrent(r.Context(), claims.ID, claims.SessionID); err != nil {
+			log.Printf("clear active session: %v", err)
+		}
+		if s.hub != nil {
+			s.hub.DropUser(claims.ID)
 		}
 	}
-	s.authCookie.clear(w)
+	if clearCookie {
+		s.authCookie.clear(w)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 

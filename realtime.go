@@ -14,16 +14,16 @@ import (
 
 // Realtime event types broadcast to connected clients over SSE.
 const (
-	EvtLeadCreated     = "lead.created"
-	EvtLeadUpdated     = "lead.updated"
-	EvtLeadDeleted     = "lead.deleted"
-	EvtUserCreated     = "user.created"
-	EvtUserUpdated     = "user.updated"
-	EvtUserDeleted     = "user.deleted"
-	EvtNotification    = "notification"
-	EvtPresenceOnline  = "presence.online"
-	EvtPresenceOffline = "presence.offline"
-	EvtPresenceSync    = "presence.sync"
+	EvtLeadCreated         = "lead.created"
+	EvtLeadUpdated         = "lead.updated"
+	EvtLeadDeleted         = "lead.deleted"
+	EvtUserCreated         = "user.created"
+	EvtUserUpdated         = "user.updated"
+	EvtUserDeleted         = "user.deleted"
+	EvtNotification        = "notification"
+	EvtPresenceOnline      = "presence.online"
+	EvtPresenceOffline     = "presence.offline"
+	EvtPresenceSync        = "presence.sync"
 	EvtAuthSessionReplaced = "auth.session_replaced"
 )
 
@@ -38,14 +38,15 @@ type PresenceInfo struct {
 // the affected surface (list / notifications) rather than trusting the payload
 // as the source of truth — keeps us correct under 200+ concurrent sessions.
 type RealtimeEvent struct {
-	Type    string         `json:"type"`
-	LeadID  string         `json:"leadId,omitempty"`
-	UserID  string         `json:"userId,omitempty"`
-	TeamID  string         `json:"teamId,omitempty"`
-	Role    string         `json:"role,omitempty"`
-	Users   []PresenceInfo `json:"users,omitempty"`
-	ActorID string         `json:"actorId,omitempty"`
-	At      int64          `json:"at"`
+	Type      string         `json:"type"`
+	LeadID    string         `json:"leadId,omitempty"`
+	UserID    string         `json:"userId,omitempty"`
+	TeamID    string         `json:"teamId,omitempty"`
+	Role      string         `json:"role,omitempty"`
+	Users     []PresenceInfo `json:"users,omitempty"`
+	ActorID   string         `json:"actorId,omitempty"`
+	SessionID string         `json:"sessionId,omitempty"`
+	At        int64          `json:"at"`
 }
 
 type sseClient struct {
